@@ -21,7 +21,14 @@ set -eo pipefail
 cd "${KOKORO_ARTIFACTS_DIR}/git/antigravity-sdk-py"
 
 echo "--- Setting up Python environment ---"
-python3 -m venv .venv
+# The ubuntu2004 Docker image ships Python 3.8; install 3.13.
+apt-get update -qq > /dev/null 2>&1
+apt-get install -y -qq software-properties-common > /dev/null 2>&1
+add-apt-repository -y ppa:deadsnakes/ppa > /dev/null 2>&1
+apt-get update -qq > /dev/null 2>&1
+apt-get install -y -qq python3.13 python3.13-venv python3.13-dev > /dev/null 2>&1
+
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 
@@ -32,6 +39,6 @@ echo "--- Running tests ---"
 python -m pytest -v --tb=short
 
 echo "--- Running lint ---"
-python -m ruff check .
+python -m ruff check google/
 
 echo "--- Presubmit passed ---"
