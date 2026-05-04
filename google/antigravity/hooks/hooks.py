@@ -160,12 +160,6 @@ class PreToolCallDecideHook(DecideHook):
   pass
 
 
-class PreToolCallTransformHook(TransformHook):
-  """Invoked before a tool call to modify arguments."""
-
-  pass
-
-
 class PostToolCallHook(InspectHook):
   """Invoked after a tool call completes."""
 

@@ -30,9 +30,6 @@ class HookRunner:
       on_session_end_hooks: list[hooks_base.OnSessionEndHook] | None = None,
       pre_turn_hooks: list[hooks_base.PreTurnHook] | None = None,
       post_turn_hooks: list[hooks_base.PostTurnHook] | None = None,
-      pre_tool_call_transform_hooks: (
-          list[hooks_base.PreToolCallTransformHook] | None
-      ) = None,
       pre_tool_call_decide_hooks: (
           list[hooks_base.PreToolCallDecideHook] | None
       ) = None,
@@ -45,7 +42,6 @@ class HookRunner:
     self.on_session_end_hooks = on_session_end_hooks or []
     self.pre_turn_hooks = pre_turn_hooks or []
     self.post_turn_hooks = post_turn_hooks or []
-    self.pre_tool_call_transform_hooks = pre_tool_call_transform_hooks or []
     self.pre_tool_call_decide_hooks = pre_tool_call_decide_hooks or []
     self.post_tool_call_hooks = post_tool_call_hooks or []
     self.on_tool_error_hooks = on_tool_error_hooks or []
@@ -62,7 +58,6 @@ class HookRunner:
         self.on_session_end_hooks,
         self.pre_turn_hooks,
         self.post_turn_hooks,
-        self.pre_tool_call_transform_hooks,
         self.pre_tool_call_decide_hooks,
         self.post_tool_call_hooks,
         self.on_tool_error_hooks,
@@ -82,8 +77,6 @@ class HookRunner:
       self.post_turn_hooks.append(hook)
     elif isinstance(hook, hooks_base.PreToolCallDecideHook):
       self.pre_tool_call_decide_hooks.append(hook)
-    elif isinstance(hook, hooks_base.PreToolCallTransformHook):
-      self.pre_tool_call_transform_hooks.append(hook)
     elif isinstance(hook, hooks_base.PostToolCallHook):
       self.post_tool_call_hooks.append(hook)
     elif isinstance(hook, hooks_base.OnToolErrorHook):
@@ -127,28 +120,23 @@ class HookRunner:
 
   # Tool
   async def dispatch_pre_tool_call(
-      self, turn_context: hooks_base.TurnContext, tool_call: types.ToolCall
+      self,
+      turn_context: hooks_base.TurnContext,
+      tool_call: types.ToolCall,
   ) -> tuple[
       hooks_base.HookResult, types.ToolCall, hooks_base.OperationContext
   ]:
-    """Dispatches pre-tool call events (Transform -> Decide)."""
+    """Dispatches pre-tool call events (Decide only).
+
+    Args:
+      turn_context: The current turn context.
+      tool_call: The tool call to evaluate.
+
+    Returns:
+      A tuple of (HookResult, ToolCall, OperationContext).
+    """
     op_context = hooks_base.OperationContext(turn_context)
 
-    # 1. Transform
-    for hook in self.pre_tool_call_transform_hooks:
-      try:
-        tool_call = await hook.run(context=op_context, data=tool_call)
-      except Exception as e:
-        logging.exception("Critical failure in PreToolCallTransformHook")
-        return (
-            hooks_base.HookResult(
-                allow=False, message=f"Transform failed: {e}"
-            ),
-            tool_call,
-            op_context,
-        )
-
-    # 2. Decide
     for hook in self.pre_tool_call_decide_hooks:
       res = await hook.run(context=op_context, data=tool_call)
       if not res.allow:

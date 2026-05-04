@@ -39,8 +39,7 @@ three strict categories:
 -   **Behavior**: They receive data, can modify it, and must return the
     (potentially modified) data. They can also fail, triggering a fail-closed
     behavior.
--   **Examples**: `PreToolCallTransformHook`, `OnToolErrorHook`,
-    `OnInteractionHook`.
+-   **Examples**: `OnToolErrorHook`, `OnInteractionHook`.
 
 ## Execution Order and Security (TOCTOU)
 
@@ -48,16 +47,13 @@ For events that support multiple hook types (e.g., `PreToolCall`), the
 `HookRunner` enforces a strict execution order to prevent **Time-of-Check to
 Time-of-Use (TOCTOU)** vulnerabilities:
 
-1.  **Transformations**: Executed first to ensure the data is in its final form.
-2.  **Decisions**: Executed second to validate the *final* data. This ensures
-    that a transformation hook cannot sneak in malicious or unauthorized data
-    after a decision hook has already approved it.
-3.  **Inspections**: Executed last to log or observe the actual execution
-    context.
+1.  **Decisions**: Executed first to validate the data. If any Decide hook
+    denies, execution is aborted immediately.
+2.  **Inspections**: Executed after the operation completes to log or observe
+    the actual execution context.
 
-Example for `PreToolCall`: `PreToolCallTransformHook` $\rightarrow$
-`PreToolCallDecideHook` $\rightarrow$ (Tool Execution) $\rightarrow$
-`PostToolCallHook`.
+Example for `PreToolCall`: `PreToolCallDecideHook` $\rightarrow$
+(Tool Execution) $\rightarrow$ `PostToolCallHook`.
 
 ## Context Management
 
@@ -85,12 +81,8 @@ To observe model-generated text:
 
 ## Fail-Safe Strategy
 
-For security-critical operations, the system adopts a **fail-closed** strategy:
-
--   If a **Decision Hook** denies execution, the operation is aborted.
--   If a **Transformation Hook** raises an exception, it is treated as a
-    failure, and the operation is aborted (fail-closed) to prevent processing
-    potentially malformed or unsafe data.
+For security-critical operations, the system adopts a **fail-closed** strategy-
+if a **Decision Hook** denies execution, the operation is aborted.
 
 ## Policies
 

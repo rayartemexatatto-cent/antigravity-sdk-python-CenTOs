@@ -24,7 +24,6 @@ Supported hooks (wired in this example):
   - PreTurnHook — before each turn (can deny)
   - PostTurnHook — after each turn (observes response)
   - PreToolCallDecideHook — before tool call (can deny)
-  - PreToolCallTransformHook — before tool call (can transform args)
   - PostToolCallHook — after tool call (observes result)
   - OnToolErrorHook — on tool failure (can provide recovery value)
   - OnCompactionHook — when context is compacted
@@ -98,31 +97,6 @@ class LogPreToolCallDecide(hooks.PreToolCallDecideHook):
   async def run(self, context, data) -> types.HookResult:
     print(f"[Hook] Pre-tool-call (decide) — tool: {data}")
     return types.HookResult(allow=True)
-
-
-class LogPreToolCallTransform(hooks.PreToolCallTransformHook):
-  """Transforms tool call args to demonstrate the Transform stage.
-
-  For the `greet` tool, appends a suffix to the name argument so the
-  greeting output proves the transform was applied.  For subagent
-  invocations, adds a ``hook_tag`` key to the args dict.
-  """
-
-  async def run(self, context, data):
-    if data.name == "greet" and "name" in data.args:
-      data = types.ToolCall(
-          name=data.name,
-          args={**data.args, "name": data.args["name"] + " (transformed)"},
-          id=data.id,
-      )
-    elif data.name == types.BuiltinTools.START_SUBAGENT.value:
-      data = types.ToolCall(
-          name=data.name,
-          args={**data.args, "hook_tag": "observed-by-transform"},
-          id=data.id,
-      )
-    print(f"[Hook] Pre-tool-call (transform) — data: {data}")
-    return data
 
 
 class LogPostToolCall(hooks.PostToolCallHook):
@@ -249,7 +223,6 @@ async def run():
           LogPreToolCallDecide(),
           LogPreSubagentCall(),
       ],
-      pre_tool_call_transform_hooks=[LogPreToolCallTransform()],
       post_tool_call_hooks=[
           LogPostToolCall(),
           LogPostSubagentCall(),

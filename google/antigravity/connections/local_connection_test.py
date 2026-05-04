@@ -1947,6 +1947,57 @@ class LocalConnectionToolCallHooksTest(unittest.IsolatedAsyncioTestCase):
     self.assertIn("recovered_value", sent_data["toolResponse"]["responseJson"])
 
 
+class LocalConnectionBuiltinDecideHookTest(
+    unittest.IsolatedAsyncioTestCase
+):
+  """Verifies Decide hooks run for built-in tool confirmations."""
+
+  def setUp(self):
+    super().setUp()
+    self.mock_process = mock.MagicMock()
+    self.mock_ws = FakeWebSocket()
+
+  async def test_decide_hooks_run_for_builtin_tools(self):
+    """Verifies PreToolCallDecideHook runs and can deny builtin tools."""
+
+    class DenyAll(hooks_base.PreToolCallDecideHook):
+
+      async def run(self, context, data):
+        return hooks_base.HookResult(allow=False, message="Denied")
+
+    hr = hook_runner.HookRunner(pre_tool_call_decide_hooks=[DenyAll()])
+    _ = local_connection.LocalConnection(
+        process=self.mock_process,
+        ws=self.mock_ws,
+        hook_runner=hr,
+    )
+
+    event = localharness_pb2.OutputEvent(
+        step_update=localharness_pb2.StepUpdate(
+            cascade_id="traj",
+            trajectory_id="traj",
+            step_index=0,
+            text='Requesting permission to call tool "run_command"',
+            state=localharness_pb2.StepUpdate.STATE_WAITING_FOR_USER,
+            source=localharness_pb2.StepUpdate.SOURCE_MODEL,
+            target=localharness_pb2.StepUpdate.TARGET_ENVIRONMENT,
+            tool_confirmation_request=(
+                localharness_pb2.ToolConfirmationRequest()
+            ),
+            run_command=localharness_pb2.ActionRunCommand(
+                command_line="rm -rf /",
+            ),
+        )
+    )
+    await self.mock_ws.put_event(event)
+    await asyncio.sleep(0.1)
+
+    sent = json.loads(self.mock_ws.sent_messages[0])
+    self.assertFalse(sent["toolConfirmation"]["accepted"])
+
+
+
+
 
 class LocalConnectionHookAcceptanceTest(unittest.IsolatedAsyncioTestCase):
   """Verifies that previously-unsupported hooks are now accepted."""

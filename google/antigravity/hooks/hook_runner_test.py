@@ -104,16 +104,8 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
     self.assertFalse(res.allow)
     self.assertIsNone(answer)
 
-  async def test_dispatch_pre_tool_call_order(self):
+  async def test_dispatch_pre_tool_call_decide(self):
     call_order = []
-
-    class OrderTransformHook(hooks.PreToolCallTransformHook):
-
-      async def run(
-          self, context: hooks.HookContext, data: types.ToolCall
-      ) -> types.ToolCall:
-        call_order.append("transform")
-        return data
 
     class OrderDecideHook(hooks.PreToolCallDecideHook):
 
@@ -124,7 +116,6 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
         return hooks.HookResult(allow=True)
 
     runner = hook_runner.HookRunner(
-        pre_tool_call_transform_hooks=[OrderTransformHook()],
         pre_tool_call_decide_hooks=[OrderDecideHook()],
     )
 
@@ -136,7 +127,7 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
     )
 
     self.assertTrue(res.allow)
-    self.assertEqual(call_order, ["transform", "decide"])
+    self.assertEqual(call_order, ["decide"])
 
   async def test_context_scoping(self):
     runner = hook_runner.HookRunner()
@@ -155,28 +146,6 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
     # Test that parent cannot access child data
     self.assertIsNone(turn_context.get("op_key"))
     self.assertIsNone(runner.session_context.get("turn_key"))
-
-  async def test_transform_fail_closed(self):
-
-    class FailTransformHook(hooks.PreToolCallTransformHook):
-
-      async def run(
-          self, context: hooks.HookContext, data: types.ToolCall
-      ) -> types.ToolCall:
-        raise ValueError("Failed")
-
-    runner = hook_runner.HookRunner(
-        pre_tool_call_transform_hooks=[FailTransformHook()]
-    )
-    turn_context = hooks.TurnContext(runner.session_context)
-    tool_call = types.ToolCall(name="t", args={})
-
-    res, tool_call, _ = await runner.dispatch_pre_tool_call(
-        turn_context, tool_call
-    )
-
-    self.assertFalse(res.allow)
-    self.assertIn("Transform failed", res.message)
 
   async def test_dispatch_on_tool_error_recovery(self):
 
@@ -266,13 +235,6 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
       ) -> hooks.HookResult:
         return hooks.HookResult(allow=True)
 
-    class DummyPreToolCallTransformHook(hooks.PreToolCallTransformHook):
-
-      async def run(
-          self, context: hooks.HookContext, data: types.ToolCall
-      ) -> types.ToolCall:
-        return data
-
     class DummyPostToolCallHook(hooks.PostToolCallHook):
 
       async def run(self, context: hooks.HookContext, data: Any) -> None:
@@ -290,7 +252,6 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
     interaction_hook = DummyOnInteractionHook()
     post_turn_hook = DummyPostTurnHook()
     decide_hook = DummyPreToolCallDecideHook()
-    transform_hook = DummyPreToolCallTransformHook()
     post_tool_call_hook = DummyPostToolCallHook()
     compaction_hook = DummyOnCompactionHook()
 
@@ -301,7 +262,6 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
     runner.register_hook(interaction_hook)
     runner.register_hook(post_turn_hook)
     runner.register_hook(decide_hook)
-    runner.register_hook(transform_hook)
     runner.register_hook(post_tool_call_hook)
     runner.register_hook(compaction_hook)
 
@@ -312,7 +272,7 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
     self.assertIn(interaction_hook, runner.on_interaction_hooks)
     self.assertIn(post_turn_hook, runner.post_turn_hooks)
     self.assertIn(decide_hook, runner.pre_tool_call_decide_hooks)
-    self.assertIn(transform_hook, runner.pre_tool_call_transform_hooks)
+
     self.assertIn(post_tool_call_hook, runner.post_tool_call_hooks)
     self.assertIn(compaction_hook, runner.on_compaction_hooks)
 

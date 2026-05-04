@@ -34,12 +34,12 @@ _TOOL_NAME_MAPPING = {
 }
 
 
-class PrintToolCallHook(hooks.PreToolCallTransformHook):
+class PrintToolCallHook(hooks.PreToolCallDecideHook):
   """Hook to print tool calls before they run."""
 
   async def run(
       self, context: hooks.HookContext, data: types.ToolCall
-  ) -> types.ToolCall:
+  ) -> types.HookResult:
     plain_name = _TOOL_NAME_MAPPING.get(data.name, data.name)
 
     # Try to find a path-like argument
@@ -57,7 +57,7 @@ class PrintToolCallHook(hooks.PreToolCallTransformHook):
       # Fallback if no path arg found
       print(f"{plain_name} with arguments: {data.args}")
 
-    return data
+    return types.HookResult(allow=True)
 
 
 async def main():

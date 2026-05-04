@@ -475,10 +475,10 @@ class LocalConnection(connection.Connection):
             )
 
           # Track the last model response from subagent trajectories so we
-          # can include it in the post-tool-call ToolResult. We capture any
-          # MODEL step with text (not just is_complete_response) because the
-          # harness may deliver text on the ACTIVE transition and then send
-          # the DONE transition with the same or empty text.
+          # can include it in the post-tool-call ToolResult. Subagent results
+          # are delivered by the harness as TrajectoryStateUpdate events, not
+          # as tool responses; we capture the last model text here so the
+          # PostToolCallHook receives the subagent's actual output.
           is_subagent_step = (
               self._cascade_id
               and step_obj.trajectory_id
