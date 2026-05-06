@@ -46,43 +46,27 @@ if [[ -n "${KOKORO_ARTIFACTS_DIR}" ]]; then
 fi
 
 PROJECT_DIR="$(pwd)"
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+
+# --- Python 3.13 via pyenv (pre-installed on the Kokoro image) ---
+echo "--- Setting up Python 3.13 ---"
+eval "$(pyenv init -)"
+pyenv install -s 3.13
+pyenv global 3.13
+python3 --version
 
 # --- Read version from pyproject.toml if not set ---
 if [[ -z "${VERSION}" ]]; then
-  VERSION=$(python3 -c "
-import re, pathlib
-text = pathlib.Path('pyproject.toml').read_text()
-m = re.search(r'^version\s*=\s*\"([^\"]+)\"', text, re.MULTILINE)
-print(m.group(1))
-")
+  VERSION=$(python3 -I -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
 fi
 
 echo "=== Antigravity SDK Release v${VERSION} ==="
 
-# --- Python environment ---
-echo "--- Setting up Python environment ---"
-# The ubuntu2204/full:current container ships Python 3.10+, which satisfies
-# the SDK's requirements. Use it directly instead of pyenv (which downloads
-# from python.org, blocked by the MOSS network proxy).
-#
-# Skip venv: the container doesn't include python3-venv, and apt-get is also
-# blocked by the proxy. The container is ephemeral, so global installs are fine.
-echo "Using system Python: $(python3 --version)"
-
-# When running on Kokoro Instances with the MOSS network proxy, AR auth is
-# injected automatically by the proxy. The ubuntu2204/full:current container
-# already ships pip, setuptools, wheel, and twine — skip the network call
-# entirely and just verify they're available.
-if [[ "${NETWORK_PROXY_ENABLED:-}" == "true" ]]; then
-  echo "MOSS proxy detected — using pre-installed packages."
-  for pkg in setuptools wheel twine; do
-    python3 -c "import importlib; importlib.import_module('$pkg')" 2>/dev/null \
-      || { echo "ERROR: Required package '$pkg' not found."; exit 1; }
-  done
-else
-  python3 -m pip install --upgrade pip setuptools wheel twine \
-      keyring keyrings.google-artifactregistry-auth 2>&1 | tail -3
-fi
+# Install build/release tools with hash verification.
+# See go/pip-install-remediation.
+python3 -m pip install \
+  --require-hashes \
+  -r "${SCRIPT_DIR}/requirements-release.txt"
 
 DIST_DIR="dist"
 rm -rf "${DIST_DIR}"
@@ -152,10 +136,7 @@ for PLATFORM in "${!PLATFORM_TAGS[@]}"; do
   touch "${BIN_DEST}/__init__.py"
 
   # Build the wheel, then re-tag with the correct platform.
-  # Use pip wheel (not 'python -m build') because the 'build' package
-  # is unavailable through the MOSS network proxy. pip wheel invokes
-  # the setuptools backend directly.
-  python3 -m pip wheel --no-deps --wheel-dir "${DIST_DIR}" .
+  python3 -m build --wheel --outdir "${DIST_DIR}"
   python3 -m wheel tags \
     --platform-tag="${WHEEL_PLAT}" \
     --remove \
