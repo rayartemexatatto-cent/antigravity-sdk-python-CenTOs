@@ -64,17 +64,18 @@ echo "--- Setting up Python environment ---"
 # The ubuntu2204/full:current container ships Python 3.10+, which satisfies
 # the SDK's requirements. Use it directly instead of pyenv (which downloads
 # from python.org, blocked by the MOSS network proxy).
-PYTHON="$(command -v python3)"
-echo "Using system Python: $($PYTHON --version)"
+#
+# Skip venv: the container doesn't include python3-venv, and apt-get is also
+# blocked by the proxy. The container is ephemeral, so global installs are fine.
+echo "Using system Python: $(python3 --version)"
 
-python3 -m venv .venv
-source .venv/bin/activate
 # When running on Kokoro Instances with the MOSS network proxy, AR auth is
 # injected automatically by the proxy. Skip the keyring auth package.
+# Use --no-cache-dir to avoid a known MOSS proxy caching issue (go/kokoro-network-monitoring).
 if [[ "${NETWORK_PROXY_ENABLED:-}" == "true" ]]; then
-  pip install --no-cache-dir --upgrade pip setuptools wheel build twine 2>&1 | tail -3
+  python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel build twine 2>&1 | tail -3
 else
-  pip install --upgrade pip setuptools wheel build twine \
+  python3 -m pip install --upgrade pip setuptools wheel build twine \
       keyring keyrings.google-artifactregistry-auth 2>&1 | tail -3
 fi
 
@@ -172,6 +173,9 @@ ls -lh "${DIST_DIR}/"
 
 # --- Upload to OSS Exit Gate ---
 REPO_URL="https://us-python.pkg.dev/oss-exit-gate-prod/google-antigravity--pypi/"
+echo ""
+echo "--- Validating wheels ---"
+twine check "${DIST_DIR}"/*
 echo ""
 echo "--- Uploading to OSS Exit Gate (${REPO_URL}) ---"
 twine upload \
