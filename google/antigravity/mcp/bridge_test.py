@@ -19,16 +19,13 @@ import unittest
 from unittest import mock
 from mcp import types
 from mcp.client.session_group import ClientSessionGroup
+from google.antigravity.mcp.bridge import get_mcp_tools
 from google.antigravity.mcp.bridge import McpBridge
-from google.antigravity.mcp.bridge import register_mcp_tools
-from google.antigravity.tools.tool_runner import ToolRunner
 
 
 class TestBridge(unittest.TestCase):
 
-  def test_register_mcp_tools(self):
-    mock_tool_runner = mock.MagicMock(spec=ToolRunner)
-
+  def test_get_mcp_tools(self):
     mock_session_group = mock.MagicMock(spec=ClientSessionGroup)
     mock_tool = types.Tool(
         name="test_tool",
@@ -39,19 +36,12 @@ class TestBridge(unittest.TestCase):
     mock_session_group.call_tool = mock.AsyncMock(return_value="tool_result")
 
     async def run_test():
-      registered_wrappers = await register_mcp_tools(
-          mock_tool_runner, mock_session_group
-      )
+      tools = await get_mcp_tools(mock_session_group)
 
-      mock_tool_runner.register.assert_called_once()
-      args, kwargs = mock_tool_runner.register.call_args
-
-      wrapper_fn = args[0]
-      self.assertEqual(kwargs["name"], "test_tool")
+      self.assertEqual(len(tools), 1)
+      wrapper_fn = tools[0]
+      self.assertEqual(wrapper_fn.__name__, "test_tool")
       self.assertEqual(wrapper_fn.__doc__, "A test tool")
-
-      self.assertEqual(len(registered_wrappers), 1)
-      self.assertEqual(registered_wrappers[0], wrapper_fn)
 
       result = await wrapper_fn(arg1="val1")
       self.assertEqual(result, "tool_result")
@@ -66,8 +56,7 @@ class TestMcpBridge(unittest.TestCase):
 
   def test_connect_stdio(self):
     """Verifies that connect_stdio correctly configures stdio transport."""
-    mock_tool_runner = mock.MagicMock(spec=ToolRunner)
-    bridge = McpBridge(mock_tool_runner)
+    bridge = McpBridge()
 
     patch_target = (
         "google.antigravity.mcp.bridge.ClientSessionGroup"
@@ -89,8 +78,7 @@ class TestMcpBridge(unittest.TestCase):
 
   def test_connect_sse(self):
     """Verifies that connect_sse correctly configures SSE transport parameters."""
-    mock_tool_runner = mock.MagicMock(spec=ToolRunner)
-    bridge = McpBridge(mock_tool_runner)
+    bridge = McpBridge()
 
     patch_target = (
         "google.antigravity.mcp.bridge.ClientSessionGroup"
@@ -112,8 +100,7 @@ class TestMcpBridge(unittest.TestCase):
 
   def test_stop(self):
     """Verifies that McpBridge stopped safely exiting ClientSessionGroup contexts."""
-    mock_tool_runner = mock.MagicMock(spec=ToolRunner)
-    bridge = McpBridge(mock_tool_runner)
+    bridge = McpBridge()
 
     patch_target = (
         "google.antigravity.mcp.bridge.ClientSessionGroup"

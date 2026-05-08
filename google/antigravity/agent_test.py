@@ -393,6 +393,19 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
     mock_runner_instance = mock.AsyncMock()
     mock_trigger_runner_class.return_value = mock_runner_instance
 
+    async def _simulate_aenter(*args, **kwargs):
+      await mock_runner_instance.start()
+      return mock_runner_instance
+
+    mock_runner_instance.__aenter__ = mock.AsyncMock(
+        side_effect=_simulate_aenter
+    )
+
+    async def _simulate_aexit(*args):
+      await mock_runner_instance.stop()
+
+    mock_runner_instance.__aexit__ = mock.AsyncMock(side_effect=_simulate_aexit)
+
     async def my_trigger(ctx):
       del ctx  # Unused.
       pass
@@ -705,11 +718,15 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
     mock_strategy_instance.stop = mock.AsyncMock()
     mock_strategy_class.return_value = mock_strategy_instance
 
-    mock_bridge_instance = mock.MagicMock()
+    mock_bridge_instance = mock.AsyncMock()
+    mock_bridge_instance.__aenter__.return_value = mock_bridge_instance
     mock_bridge_instance.connect_stdio = mock.AsyncMock()
     mock_bridge_instance.connect_sse = mock.AsyncMock()
-    mock_bridge_instance.stop = mock.AsyncMock()
     mock_mcp_bridge.return_value = mock_bridge_instance
+
+    mock_tool = mock.MagicMock()
+    mock_tool.__name__ = "mock_tool"
+    mock_bridge_instance.tools = [mock_tool]
 
     mcp_servers = [
         types.McpStdioServer(command="python3", args=["server.py"]),
@@ -722,13 +739,19 @@ class AgentTest(unittest.IsolatedAsyncioTestCase):
         policies=[policy.deny("*")],
     )
     async with agent.Agent(config) as ag:
-      mock_mcp_bridge.assert_called_once_with(ag._tool_runner)
+      mock_mcp_bridge.assert_called_once_with()
       mock_bridge_instance.connect_stdio.assert_called_once_with(
           "python3", ["server.py"]
       )
       mock_bridge_instance.connect_sse.assert_called_once_with(
           "http://localhost:8000/sse", None
       )
+
+      _, kwargs = mock_strategy_class.call_args
+      tool_runner_instance = kwargs.get("tool_runner")
+      self.assertIsNotNone(tool_runner_instance)
+      self.assertIn("mock_tool", tool_runner_instance.tools)
+      self.assertEqual(tool_runner_instance.tools["mock_tool"], mock_tool)
 
     mock_bridge_instance.stop.assert_called_once()
 

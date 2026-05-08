@@ -145,20 +145,17 @@ async def run():
   strategy = None
   mcp_bridge = None
   try:
-    # In-process Python tools via ToolRunner ---
-    # ToolRunner executes Python functions directly in this process.
-    # These tools are dispatched by the Connection when the agent calls them.
-    tool_runner = ToolRunner(tools=[read_file_upside_down])
-
     # McpBridge connects to a separate MCP server process over stdio.
-    # Its tools are merged into the ToolRunner so both paths are available
-    # to the agent.
-    mcp_bridge = McpBridge(tool_runner)
+    mcp_bridge = McpBridge()
     mcp_server_path = os.path.join(
         os.path.dirname(__file__), "mcp_server.par"
     )
     await mcp_bridge.connect_stdio(mcp_server_path, ["--transport=stdio"])
     logging.info("MCP server connected (pirate math tools available).")
+
+    # All tools available to the model (either in-process Python functions or
+    # MCP) are registered in the ToolRunner.
+    tool_runner = ToolRunner(tools=[read_file_upside_down] + mcp_bridge.tools)
 
     hr = hooks_runner.HookRunner()
     hr.register_hook(

@@ -18,23 +18,21 @@ from typing import Any, Callable
 from mcp.client import stdio
 from mcp.client.session_group import ClientSessionGroup
 from mcp.client.session_group import SseServerParameters
-from google.antigravity.tools.tool_runner import ToolRunner
 from google.antigravity.tools.tool_runner import ToolWithSchema
 
 
-async def register_mcp_tools(
-    tool_runner: ToolRunner, session_group: ClientSessionGroup
-) -> list[Callable[..., Any]]:
-  """Fetches tools from session_group and registers them in tool_runner.
+async def get_mcp_tools(
+    session_group: ClientSessionGroup,
+) -> list[ToolWithSchema]:
+  """Fetches tools from session_group and returns them as ToolWithSchema.
 
   Args:
-    tool_runner: The ToolRunner to register tools with.
     session_group: The ClientSessionGroup to fetch tools from.
 
   Returns:
-    A list of wrapper functions that were registered.
+    A list of ToolWithSchema objects.
   """
-  registered_wrappers = []
+  tools = []
   for tool_info in session_group.tools.values():
     name = tool_info.name
 
@@ -49,18 +47,17 @@ async def register_mcp_tools(
 
     wrapper_fn = make_wrapper(name, tool_info.description)
     tool_with_schema = ToolWithSchema(wrapper_fn, tool_info.inputSchema)
-    tool_runner.register(tool_with_schema, name=name)
-    registered_wrappers.append(tool_with_schema)
+    tools.append(tool_with_schema)
 
-  return registered_wrappers
+  return tools
 
 
 class McpBridge:
-  """Simplifies the lifecycle of MCP Client Sessions and Tool Registration."""
+  """Simplifies the lifecycle of MCP Client Sessions."""
 
-  def __init__(self, tool_runner: ToolRunner):
-    self.tool_runner = tool_runner
+  def __init__(self):
     self.session_group = None
+    self.tools: list[ToolWithSchema] = []
 
   async def connect_stdio(self, command: str, args: list[str]):
     """Connects to a local MCP server over stdio."""
@@ -77,7 +74,7 @@ class McpBridge:
       self.session_group = ClientSessionGroup()
       await self.session_group.__aenter__()
     await self.session_group.connect_to_server(params)
-    await register_mcp_tools(self.tool_runner, self.session_group)
+    self.tools = await get_mcp_tools(self.session_group)
 
   async def stop(self):
     """Cleans up all active MCP sessions."""
