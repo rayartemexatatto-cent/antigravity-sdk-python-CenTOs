@@ -39,11 +39,21 @@ python3 -m pip install \
   --no-deps \
   -r "${SCRIPT_DIR}/requirements-build.txt"
 
-echo "--- Installing package and test dependencies ---"
-# Install the package under test and its dev dependencies.
-# This is the package being built, not a supply-chain dependency,
-# so hash verification is not applicable here.
-python3 -m pip install -e ".[dev]"
+echo "--- Installing runtime and test dependencies with hash verification ---"
+# Install all runtime + test dependencies with hash verification.
+# The lockfile is generated from pyproject.toml via:
+#   pip-compile --allow-unsafe --generate-hashes --extra dev pyproject.toml \
+#     -o .kokoro/requirements-test.txt
+# See go/pip-install-remediation.
+python3 -m pip install \
+  --require-hashes \
+  --no-deps \
+  -r "${SCRIPT_DIR}/requirements-test.txt"
+
+echo "--- Installing package under test ---"
+# Install the package itself with --no-deps since dependencies are already
+# installed above with hash verification.
+python3 -m pip install --no-deps -e .
 
 echo "--- Running tests ---"
 python3 -m pytest -v --tb=short

@@ -49,6 +49,14 @@ if [[ -n "${KOKORO_ARTIFACTS_DIR}" ]]; then
   cd "${KOKORO_ARTIFACTS_DIR}/git/antigravity-sdk-py"
 fi
 
+# If a specific GoB commit was requested (via GOB_COMMIT build param),
+# check it out to pin the Python source to a specific Piper CL.
+# Kokoro exposes build_params as environment variables.
+if [[ -n "${GOB_COMMIT:-}" ]]; then
+  echo "--- Pinning SDK source to GoB commit: ${GOB_COMMIT} ---"
+  git checkout "${GOB_COMMIT}"
+fi
+
 PROJECT_DIR="$(pwd)"
 
 # --- Python 3.13 via pyenv (pre-installed on the Kokoro image) ---
@@ -173,7 +181,6 @@ echo ""
 echo "--- Uploading to OSS Exit Gate (${REPO_URL}) ---"
 twine upload \
   --repository-url "${REPO_URL}" \
-  --skip-existing \
   --verbose \
   "${DIST_DIR}"/*
 
