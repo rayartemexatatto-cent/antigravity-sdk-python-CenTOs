@@ -3403,6 +3403,36 @@ class LocalAgentConfigTest(unittest.TestCase):
         strategy._gemini_config.models.default.name, "gemini-2.5-pro"
     )
 
+  def test_constructor_parameters_fully_typed(self):
+    """Verifies all subclass fields are accepted by the constructor under pytype."""
+    config = local_connection_config.LocalAgentConfig(
+        system_instructions="test",
+        capabilities=types.CapabilitiesConfig(enable_subagents=True),
+        tools=[],
+        policies=[],
+        hooks=[],
+        triggers=[],
+        mcp_servers=[],
+        workspaces=["/tmp/ws"],
+        conversation_id="123",
+        save_dir="/tmp/save",
+        app_data_dir="/tmp/app",
+        response_schema="{}",
+        skills_paths=["/tmp/skills"],
+        gemini_config=types.GeminiConfig(),
+        model="gemini-2.5-pro",
+        api_key="fake_api_key",
+        vertex=True,
+        project="my_project",
+        location="us-central1",
+    )
+    self.assertEqual(config.model, "gemini-2.5-pro")
+    self.assertEqual(config.api_key, "fake_api_key")
+    self.assertTrue(config.vertex)
+    self.assertEqual(config.project, "my_project")
+    self.assertEqual(config.location, "us-central1")
+    self.assertEqual(config.conversation_id, "123")
+
   def test_safe_defaults(self):
     """LocalAgentConfig defaults to confirm_run_command() — deny run_command."""
     config = local_connection_config.LocalAgentConfig(

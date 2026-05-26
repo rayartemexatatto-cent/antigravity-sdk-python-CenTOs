@@ -42,7 +42,7 @@ async def main() -> None:
   print(f"  Custom App Data Dir: {custom_app_data}\n")
 
   # Initialize the agent config with our custom app_data_dir override
-  config = LocalAgentConfig(app_data_dir=str(custom_app_data))  # pytype: disable=wrong-keyword-args
+  config = LocalAgentConfig(app_data_dir=str(custom_app_data))
 
   # Start the agent and ask it to create an artifact
   async with Agent(config) as my_agent:

@@ -100,7 +100,7 @@ async def run() -> None:
   # ----------------------------------------------------------------
   _header("Phase 1: Generator — creating image")
 
-  gen_config = LocalAgentConfig(  # pytype: disable=wrong-keyword-args
+  gen_config = LocalAgentConfig(
       system_instructions=(
           "You are an image generation assistant. When asked to "
           "generate an image, use the 'generate_image' tool. After "
