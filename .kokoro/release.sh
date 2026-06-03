@@ -60,6 +60,9 @@ fi
 # Kokoro exposes build_params as environment variables.
 if [[ -n "${GOB_COMMIT:-}" ]]; then
   echo "--- Pinning SDK source to GoB commit: ${GOB_COMMIT} ---"
+  # Redirect internal Git protocols to HTTPS since helpers are missing in RBE
+  git config --global url."https://antigravity-sdk.googlesource.com/".insteadOf "sso://antigravity-sdk/"
+  git config --global url."https://antigravity-sdk.googlesource.com/".insteadOf "rpc://antigravity-sdk/"
   # Fetch the commit first in case the clone is shallow.
   git fetch origin "${GOB_COMMIT}" || git fetch origin
   git checkout "${GOB_COMMIT}"
