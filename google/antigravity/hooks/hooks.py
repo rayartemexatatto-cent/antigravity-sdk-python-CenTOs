@@ -38,7 +38,7 @@ class HookContext:
     self.parent = parent
     self._store: dict[str, Any] = {}
 
-  def get(self, key: str, default: Any = None) -> Any:
+  def get_state(self, key: str, default: Any = None) -> Any:
     """Gets a value from the context or its parents.
 
     Args:
@@ -51,10 +51,10 @@ class HookContext:
     if key in self._store:
       return self._store[key]
     if self.parent:
-      return self.parent.get(key, default)
+      return self.parent.get_state(key, default)
     return default
 
-  def set(self, key: str, value: Any) -> None:
+  def set_state(self, key: str, value: Any) -> None:
     """Sets a value in the local context.
 
     Args:
