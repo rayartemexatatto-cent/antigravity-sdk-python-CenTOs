@@ -27,16 +27,12 @@ from google.antigravity.tools import tool_context
 from google.antigravity.tools import tool_runner
 from google.antigravity.triggers import trigger_runner
 
-
 __all__ = ["Agent"]
-
-
 class Agent:
   """High-level Agent API for simplified interaction."""
 
   def __init__(self, config: connection_module.AgentConfig):
     """Initializes the Agent.
-
     Args:
         config: Declarative agent configuration.
     """
