@@ -200,3 +200,75 @@ class Agent:
     if not self._conversation:
       return None
     return self._conversation.conversation_id or None
+from google.antigravity.hooks import policy
+from google.antigravity import LocalAgentConfig, Agent
+import asyncio
+
+# =====================================================================
+# GANCHO 1: DECIDE HOOK (Seguridad para Localhost)
+# =====================================================================
+async def bloquear_ejecucion_externa(tool_call, context):
+    """
+    Evita que el agente ejecute comandos en entornos que no sean localhost
+    o que alteren puertos no autorizados en tu mesa de control.
+    """
+    argumentos = str(tool_call.arguments)
+    
+    # Si intenta usar herramientas del sistema fuera de tu red local, bloqueamos
+    if "run_command" in tool_call.name and "127.0.0.1" not in argumentos and "localhost" not in argumentos:
+        print(f"⚠️ Intento de comando externo detectado en: {tool_call.name}")
+        return {"allow": False} # S_S8: Decide hooks devuelven allow=True/False
+        
+    return {"allow": True}
+
+# =====================================================================
+# GANCHO 2: TRANSFORM HOOK (Autocorrección de Puertos y Protocolos)
+# =====================================================================
+async def corregir_errores_localhost(tool_error, context):
+    """
+    Si el agente intenta levantar un servidor local y choca con un puerto
+    en uso o un error de protocolo, interceptamos el fallo y le inyectamos 
+    la solución exacta de tus documentos de Drive para que se auto-corrija.
+    """
+    mensaje_error = str(tool_error.error)
+    print(f"🔍 Interceptando error de herramienta: {mensaje_error}")
+
+    # Si detecta que el puerto 8181 está caído (como en tus configs locales)
+    if "8181" in mensaje_error or "connection refused" in mensaje_error:
+        solucion = (
+            "\n ERROR DE PUERTO DETECTADO. "
+            "Sugerencia de solución: El puerto 8181 de localhost está cerrado. "
+            "Usa la herramienta ADB para mapear el reenvío: 'adb reverse tcp:8181 tcp:8181' "
+            "y vuelve a intentar la conexión."
+        )
+        # S_S8: Transform hooks modifican el dato en tránsito y lo devuelven
+        tool_error.error = f"{mensaje_error}\n{solucion}"
+        print("⚡ Solución de puerto inyectada en el flujo de la IA.")
+
+    return tool_error
+async def ejecutar_agente_con_habilidades():
+    # Creamos la configuración inyectando nuestros ganchos personalizados
+    config = LocalAgentConfig(
+        project="tu-proyecto-gcp",
+        location="us-central1",
+        # Registramos los ganchos que acabamos de escribir
+        hooks=[bloquear_ejecucion_externa, corregir_errores_localhost],
+        # Definimos políticas de herramientas obligatorias para habilitar escrituras
+        policies=[policy.allow_all()] 
+    )
+
+    # El bloque "async with" ejecuta de fondo el __aenter__ de tu código,
+    # levantando la sesión con los ganchos ya activos y validados.
+    async with Agent(config) as agent:
+        # El agente ahora es capaz de explorar y auto-corregir sus herramientas locales
+        prompt = (
+            "Intenta levantar el servicio de inventario en http://localhost:8181. "
+            "Si falla, busca cómo resolverlo y restáuralo."
+        )
+        response = await agent.chat(prompt)
+        print("\n:")
+        print(await response.text())
+
+if __name__ == "__main__":
+    asyncio.run(ejecutar_agente_con_habilidades())
+
