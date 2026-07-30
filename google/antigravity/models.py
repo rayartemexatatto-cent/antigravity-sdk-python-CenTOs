@@ -32,8 +32,8 @@ import pydantic
 # Constants
 # =============================================================================
 
-DEFAULT_MODEL = "gemini-3.5-flash"
-DEFAULT_IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image-preview"
+DEFAULT_MODEL = "gemini-3.6-flash"
+DEFAULT_IMAGE_GENERATION_MODEL = "gemini-3.1-flash-lite-image"
 
 
 # =============================================================================
@@ -53,12 +53,14 @@ class ThinkingLevel(str, enum.Enum):
     LOW: Low thinking.
     MEDIUM: Medium thinking.
     HIGH: High thinking.
+    EXTRA_HIGH: Extra-high thinking.
   """
 
   MINIMAL = "minimal"
   LOW = "low"
   MEDIUM = "medium"
   HIGH = "high"
+  EXTRA_HIGH = "extra_high"
 
 
 class ModelType(str, enum.Enum):
@@ -111,12 +113,19 @@ class VertexEndpoint(ModelEndpoint):
   location: str | None = None
   options: GeminiModelOptions | None = None
 
+  @pydantic.model_validator(mode="before")
+  @classmethod
+  def _populate_env_vars(cls, data: Any) -> Any:
+    if isinstance(data, dict):
+      if data.get("project") is None:
+        data["project"] = os.environ.get("GOOGLE_CLOUD_PROJECT")
+      if data.get("location") is None:
+        data["location"] = os.environ.get("GOOGLE_CLOUD_LOCATION")
+    return data
+
   def validate_endpoint(self) -> None:
     if not (self.project and self.location):
-      raise ValueError(
-          "For Vertex AI, a GCP project and location, or an API key (Express"
-          " Mode), must be set."
-      )
+      raise ValueError("For Vertex AI, a GCP project and location must be set.")
 
 
 class ModelTarget(pydantic.BaseModel):
@@ -127,18 +136,3 @@ class ModelTarget(pydantic.BaseModel):
       default_factory=lambda: [ModelType.TEXT]
   )
   endpoint: ModelEndpoint | None = None
-
-
-def _coerce_models_list(v: Any) -> list[ModelTarget] | None:
-  """Coerces shorthand model definitions into a list of ModelTargets."""
-  if v is None:
-    return None
-  if isinstance(v, list):
-    coerced = []
-    for item in v:
-      if isinstance(item, dict):
-        coerced.append(ModelTarget.model_validate(item))
-      else:
-        coerced.append(item)
-    return coerced
-  return v

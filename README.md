@@ -50,6 +50,18 @@ async with Agent(config) as agent:
     print(await response.text())
 ```
 
+Alternatively, you can leave these fields unset in `LocalAgentConfig` and
+export the environment variables instead:
+
+```sh
+# Either GOOGLE_GENAI_USE_VERTEXAI or GOOGLE_GENAI_USE_ENTERPRISE enable Vertex.
+export GOOGLE_GENAI_USE_VERTEXAI=True
+export GOOGLE_CLOUD_PROJECT="your-gcp-project"
+export GOOGLE_CLOUD_LOCATION="us-central1"
+```
+
+Explicit kwargs always take precedence over env vars.
+
 Ensure you have authenticated locally before running the agent:
 
 ```sh

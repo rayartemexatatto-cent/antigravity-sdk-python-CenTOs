@@ -66,11 +66,11 @@ fi
 
 PROJECT_DIR="$(pwd)"
 
-# --- Python 3.10 via pyenv (pre-installed on the Kokoro image) ---
-echo "--- Setting up Python 3.10 ---"
+# --- Python 3.13 via pyenv (pre-installed on the Kokoro image) ---
+echo "--- Setting up Python 3.13 ---"
 eval "$(pyenv init -)"
-pyenv install -s 3.10
-pyenv global 3.10
+pyenv install -s 3.13
+pyenv global 3.13
 python3 --version
 
 # --- Read version from pyproject.toml if not set ---
@@ -166,6 +166,11 @@ if [[ -z "${PUBLISH_PREBUILT_VERSION:-}" ]]; then
       fi
     fi
   done
+
+  # Compile protos to python stubs
+  echo "--- Compiling protos ---"
+  python3 -m grpc_tools.protoc -I. --python_out=. google/antigravity/proto/*
+  touch google/antigravity/proto/__init__.py
 
   # --- Build platform-specific wheels ---
   BUILT_ANY=false

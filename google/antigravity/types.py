@@ -28,6 +28,7 @@ import pathlib
 from typing import Annotated, Any, AsyncIterator, Callable, Literal, TypeVar, cast
 
 import pydantic
+
 from google.antigravity.models import GeminiAPIEndpoint
 from google.antigravity.models import GeminiModelOptions
 from google.antigravity.models import ModelEndpoint
@@ -54,6 +55,10 @@ __all__ = [
     "SubagentCapabilities",
     "BuiltinTools",
     "CapabilitiesConfig",
+    "ModelAPIRetryConfig",
+    "ModelOutputRetryConfig",
+    "RetryConfig",
+    "SessionContinuationMode",
     "BaseMcpServerConfig",
     "McpStdioServer",
     "McpStreamableHttpServer",
@@ -76,6 +81,7 @@ __all__ = [
     "AntigravityCancelledError",
     "AntigravityValidationError",
     "AntigravityExecutionError",
+    "ToolExecutionError",
     "StreamChunk",
     "Thought",
     "Text",
@@ -85,6 +91,8 @@ __all__ = [
     "Audio",
     "Video",
     "Content",
+    "ContentPrimitive",
+    "from_file",
     "SlashCommand",
     "BuiltinSlashCommandName",
 ]
@@ -164,8 +172,11 @@ class SubagentConfig(pydantic.BaseModel):
   Attributes:
     name: Unique name of the subagent.
     description: Description of the subagent.
-    system_instructions: Optional system instructions for the subagent. Note
-      that these will be appended to the subagent's default system instructions.
+    system_instructions: Optional system instructions for the subagent. Supports
+      a string or a SystemInstructions. Note that string and
+      TemplatedSystemInstructions inputs will be appended to the subagent's
+      default system instructions, whereas CustomSystemInstructions will
+      completely replace them.
     capabilities: Optional capabilities config controlling allowed tools. If
       None, defaults to read-only tools.
     tools: Optional list of additional custom tools (callable functions or
@@ -176,7 +187,7 @@ class SubagentConfig(pydantic.BaseModel):
 
   name: str
   description: str
-  system_instructions: str | list[SystemInstructionSection] | None = None
+  system_instructions: str | SystemInstructions | None = None
   capabilities: SubagentCapabilities | None = None
   tools: list[Callable[..., Any] | str] = pydantic.Field(default_factory=list)
 
@@ -196,6 +207,7 @@ class BuiltinTools(str, enum.Enum):
     START_SUBAGENT: Invoke a subagent.
     GENERATE_IMAGE: Generate or edit images.
     SEARCH_WEB: Search the web.
+    READ_URL_CONTENT: Read content from a URL.
     FINISH: Finish the conversation and return structured output.
   """
 
@@ -210,6 +222,7 @@ class BuiltinTools(str, enum.Enum):
   START_SUBAGENT = "start_subagent"
   GENERATE_IMAGE = "generate_image"
   SEARCH_WEB = "search_web"
+  READ_URL_CONTENT = "read_url_content"
   FINISH = "finish"
 
   @classmethod
@@ -224,6 +237,7 @@ class BuiltinTools(str, enum.Enum):
         cls.SEARCH_DIR,
         cls.FIND_FILE,
         cls.VIEW_FILE,
+        cls.READ_URL_CONTENT,
         cls.FINISH,
     ]
 
@@ -245,6 +259,7 @@ class BuiltinTools(str, enum.Enum):
         cls.START_SUBAGENT,
         cls.GENERATE_IMAGE,
         cls.SEARCH_WEB,
+        cls.READ_URL_CONTENT,
         cls.FINISH,
     ]
 
@@ -334,6 +349,74 @@ class CapabilitiesConfig(pydantic.BaseModel):
           "enabled_tools and disabled_tools should be mutually exclusive."
       )
     return self
+
+
+_MAX_UINT32 = 2**32 - 1  # Maximum value for protobuf uint32 wire fields
+
+
+class ModelAPIRetryConfig(pydantic.BaseModel):
+  """Configuration for API retry behavior with exponential backoff.
+
+  Attributes:
+    max_retries: The maximum number of retries for transient API errors.
+    initial_sleep_duration_ms: The initial sleep duration in milliseconds.
+    exponential_multiplier: The multiplier for exponential backoff.
+    jitter_range: The range for jitter when calculating backoff.
+  """
+
+  max_retries: int | None = pydantic.Field(default=None, ge=0, le=_MAX_UINT32)
+  initial_sleep_duration_ms: int | None = pydantic.Field(
+      default=None, ge=0, le=_MAX_UINT32
+  )
+  exponential_multiplier: float | None = pydantic.Field(default=None, ge=0.0)
+  jitter_range: float | None = pydantic.Field(default=None, ge=0.0)
+
+
+class ModelOutputRetryConfig(pydantic.BaseModel):
+  """Configuration for model output retry behavior.
+
+  Attributes:
+    max_retries: The maximum number of retries for malformed model outputs.
+  """
+
+  max_retries: int | None = pydantic.Field(default=None, ge=0, le=_MAX_UINT32)
+
+
+class RetryConfig(pydantic.BaseModel):
+  """Combined retry configuration for model API calls and output validation.
+
+  When `retry_config` is omitted (or fields are left as None), the backend
+  automatically applies built-in interactive defaults (e.g., standard API retry
+  counts, exponential backoff, and model output validation attempts). You only
+  need to provide explicit configuration when overriding these system defaults.
+
+  Attributes:
+    api_retry: Optional configuration for API retry behavior with exponential
+      backoff.
+    model_output_retry: Optional configuration for model output retry behavior.
+  """
+
+  api_retry: ModelAPIRetryConfig | None = None
+  model_output_retry: ModelOutputRetryConfig | None = None
+
+  @classmethod
+  def benchmark(cls) -> "RetryConfig":
+    """Optimized for evaluation suites, automated benchmarks, and load testing.
+
+    Uses unbounded retry tolerance (max uint32: 4,294,967,295 attempts) for
+    transient API errors (429 rate limits, 503 service throttling) to prevent
+    quota issues from crashing evaluation suites, while relying on the default
+    localharness model output retry behavior to remain consistent with
+    production product performance.
+
+    Returns:
+      A RetryConfig configured for benchmark and eval workflows.
+    """
+    return cls(
+        api_retry=ModelAPIRetryConfig(
+            max_retries=_MAX_UINT32, initial_sleep_duration_ms=1000
+        )
+    )
 
 
 class BaseMcpServerConfig(pydantic.BaseModel):
@@ -441,12 +524,14 @@ class ToolCall(pydantic.BaseModel):
     args: Keyword arguments for the tool, as a JSON-serializable dict.
     canonical_path: Optional normalized filesystem path for file-related tools.
       Populated by the Connection layer to enable platform-agnostic L2 policies.
+    server_name: Optional server name if this tool belongs to an MCP server.
   """
 
   name: BuiltinTools | str
   args: dict[str, Any] = pydantic.Field(default_factory=dict)
   id: str | None = None
   canonical_path: str | None = None
+  server_name: str | None = None
 
 
 class ToolResult(pydantic.BaseModel):
@@ -459,6 +544,7 @@ class ToolResult(pydantic.BaseModel):
     result: The tool's return value. Can be any JSON-serializable value.
     error: An error message if execution failed, or None on success.
     exception: The original exception if execution failed. Not serialized.
+    server_name: Optional server name if this tool belongs to an MCP server.
   """
 
   model_config = pydantic.ConfigDict(
@@ -470,6 +556,7 @@ class ToolResult(pydantic.BaseModel):
   result: Any = None
   error: str | None = None
   exception: Exception | None = pydantic.Field(default=None, exclude=True)
+  server_name: str | None = None
 
 
 PythonTool = Callable[..., Any]
@@ -508,6 +595,22 @@ class UsageMetadata(pydantic.BaseModel):
   # Total tokens (prompt + candidates + thoughts).
   total_token_count: int | None = None
 
+  def __add__(self, other: UsageMetadata) -> UsageMetadata:
+    if not isinstance(other, UsageMetadata):
+      return NotImplemented
+    return UsageMetadata(
+        prompt_token_count=(self.prompt_token_count or 0)
+        + (other.prompt_token_count or 0),
+        cached_content_token_count=(self.cached_content_token_count or 0)
+        + (other.cached_content_token_count or 0),
+        candidates_token_count=(self.candidates_token_count or 0)
+        + (other.candidates_token_count or 0),
+        thoughts_token_count=(self.thoughts_token_count or 0)
+        + (other.thoughts_token_count or 0),
+        total_token_count=(self.total_token_count or 0)
+        + (other.total_token_count or 0),
+    )
+
 
 class StepType(str, enum.Enum):
   """High-level type of a step."""
@@ -517,6 +620,7 @@ class StepType(str, enum.Enum):
   SYSTEM_MESSAGE = "SYSTEM_MESSAGE"
   COMPACTION = "COMPACTION"
   FINISH = "FINISH"
+  THINKING = "THINKING"
   UNKNOWN = "UNKNOWN"
 
 
@@ -547,6 +651,20 @@ class StepStatus(str, enum.Enum):
   ERROR = "ERROR"
   CANCELED = "CANCELED"
   UNKNOWN = "UNKNOWN"
+
+
+class SessionContinuationMode(str, enum.Enum):
+  """Mode for establishing a connection to an agent session.
+
+  Attributes:
+    RESUME: Resume an existing session. Fail if it doesn't exist.
+    CREATE_OR_RESUME: Resume if exists, create a new one if missing.
+    CREATE_ONLY: Create a new session. Fail if it already exists.
+  """
+
+  RESUME = "resume"
+  CREATE_OR_RESUME = "create_or_resume"
+  CREATE_ONLY = "create_only"
 
 
 class Step(pydantic.BaseModel):
@@ -694,6 +812,20 @@ class AntigravityExecutionError(Exception):
   This indicates that the agent loop has terminated due to a fatal error
   (e.g. model call failure, system constraint violation) and cannot continue.
   """
+
+
+class ToolExecutionError(RuntimeError):
+  """Raised when a tool execution fails, carrying tool metadata."""
+
+  tool_name: str
+  server_name: str | None
+
+  def __init__(
+      self, message: str, tool_name: str, server_name: str | None = None
+  ):
+    super().__init__(message)
+    self.tool_name = tool_name
+    self.server_name = server_name
 
 
 class AntigravityValidationError(Exception):
@@ -932,7 +1064,12 @@ SUPPORTED_DOCUMENT_MIMES = frozenset({
 
 SUPPORTED_AUDIO_MIMES = frozenset({
     "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/vnd.wave",
     "audio/mp3",
+    "audio/mp4",
+    "audio/webm",
     "audio/aac",
     "audio/ogg",
     "audio/flac",
@@ -1012,9 +1149,14 @@ class _BaseMedia(pydantic.BaseModel):
     file_path = pathlib.Path(path)
     data = _read_file_safely(file_path)
     mime_guess, _ = mimetypes.guess_type(file_path)
+    if not mime_guess:
+      raise ValueError(
+          "Could not infer a valid MIME type for extension: "
+          f"'{file_path.suffix}'"
+      )
     return cls(
         data=data,
-        mime_type=mime_guess or "",
+        mime_type=mime_guess,
         description=description,
     )
 
@@ -1134,13 +1276,33 @@ def from_file(
         f"Could not infer a valid MIME type for extension: '{file_path.suffix}'"
     )
 
-  media_cls = _MIME_TO_MEDIA_CLASS.get(mime_guess)
+  return from_bytes(data, mime_guess, description)
+
+
+def from_bytes(
+    data: bytes, mime_type: str, description: str | None = None
+) -> Image | Document | Audio | Video:
+  """Automatically resolves raw bytes and a MIME type into the correct Content primitive.
+
+  Args:
+      data: Raw file bytes.
+      mime_type: The MIME type of the content.
+      description: Optional text description of the media.
+
+  Returns:
+      A specialized media object (Image, Document, Audio, or Video) based on the
+      MIME type.
+
+  Raises:
+      ValueError: If the MIME type is unsupported.
+  """
+  media_cls = _MIME_TO_MEDIA_CLASS.get(mime_type)
   if media_cls is None:
     raise ValueError(
-        f"Unsupported MIME type: '{mime_guess}'. "
+        f"Unsupported MIME type: '{mime_type}'. "
         f"Supported file formats in the SDK are: {sorted(_MIME_TO_MEDIA_CLASS)}"
     )
   return cast(
       Image | Document | Audio | Video,
-      media_cls(data=data, mime_type=mime_guess, description=description),
+      media_cls(data=data, mime_type=mime_type, description=description),
   )

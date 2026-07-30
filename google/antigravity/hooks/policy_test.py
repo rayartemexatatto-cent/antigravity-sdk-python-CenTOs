@@ -46,14 +46,21 @@ class RunCommandArgs(pydantic.BaseModel):
   command_line: str
 
 
-def _make_tool_call(name: str = "run_command", **args: Any) -> types.ToolCall:
+def _make_tool_call(
+    name: str = "run_command", server_name: str | None = None, **args: Any
+) -> types.ToolCall:
   # Simulate Connection layer path normalization for tests
   canonical_path = None
   for path_key in ("path", "file_path", "TargetFile", "directory_path"):
     if path_key in args and isinstance(args[path_key], str):
       canonical_path = args[path_key]
       break
-  return types.ToolCall(name=name, args=args, canonical_path=canonical_path)
+  return types.ToolCall(
+      name=name,
+      args=args,
+      canonical_path=canonical_path,
+      server_name=server_name,
+  )
 
 
 class BuilderTest(unittest.TestCase):
@@ -960,15 +967,6 @@ class McpPolicyTest(unittest.IsolatedAsyncioTestCase):
       policy.allow(self.mcp_config, "calc")
     self.assertIn("mcp_tools must be a sequence of strings", str(ctx.exception))
 
-  def test_enforce_fails_closed_on_missing_servers(self):
-    """enforce() must raise ValueError if MCP policies exist but mcp_servers is missing."""
-    policies = policy.allow(self.mcp_config)
-    with self.assertRaises(ValueError) as ctx:
-      policy.enforce(policies)  # mcp_servers omitted!
-    self.assertIn(
-        "'mcp_servers' was not provided to enforce()", str(ctx.exception)
-    )
-
   def test_enforce_flattens_nested_policies(self):
     """enforce() must successfully flatten mixed nested lists of policies."""
     policies = [
@@ -990,11 +988,13 @@ class McpPolicyTest(unittest.IsolatedAsyncioTestCase):
     )
     ctx = hooks.HookContext()
 
-    result = await hook.run(ctx, _make_tool_call("mcp_math_advanced_calc"))
+    result = await hook.run(
+        ctx, _make_tool_call("calc", server_name="math_advanced")
+    )
     self.assertFalse(result.allow)
     self.assertIn("math_advanced_all", result.message)
 
-    result = await hook.run(ctx, _make_tool_call("mcp_math_calc"))
+    result = await hook.run(ctx, _make_tool_call("calc", server_name="math"))
     self.assertTrue(result.allow)
 
   async def test_9_level_priority_specific_allow_beats_prefix_deny(self):
@@ -1008,10 +1008,12 @@ class McpPolicyTest(unittest.IsolatedAsyncioTestCase):
     hook = policy.enforce(policies, mcp_servers=[self.mcp_config])
     ctx = hooks.HookContext()
 
-    result = await hook.run(ctx, _make_tool_call("mcp_math_calc"))
+    result = await hook.run(ctx, _make_tool_call("calc", server_name="math"))
     self.assertTrue(result.allow)
 
-    result = await hook.run(ctx, _make_tool_call("mcp_math_multiply"))
+    result = await hook.run(
+        ctx, _make_tool_call("multiply", server_name="math")
+    )
     self.assertFalse(result.allow)
 
   def test_enforce_rejects_non_policy_in_sequence(self):
@@ -1046,9 +1048,9 @@ class McpPolicyTest(unittest.IsolatedAsyncioTestCase):
     hook = policy.enforce(policies, mcp_servers=[self.mcp_config])
     ctx = hooks.HookContext()
 
-    # Since 'unknown' is unregistered, 'mcp_unknown_calc' is treated as a standard tool.
+    # Since 'unknown' is unregistered, 'calc' with server_name='unknown' is treated as a standard tool.
     # It should NOT match the 'math/*' prefix wildcard.
-    result = await hook.run(ctx, _make_tool_call("mcp_unknown_calc"))
+    result = await hook.run(ctx, _make_tool_call("calc", server_name="unknown"))
     self.assertTrue(result.allow)  # Default open since no policy matches
 
 

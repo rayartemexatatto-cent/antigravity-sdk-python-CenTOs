@@ -21,7 +21,10 @@ import pydantic
 class RunCommandResult(pydantic.BaseModel):
   """Structured result from a run_command tool execution."""
 
-  output: str = ""
+  output: str = pydantic.Field(
+      default="",
+      validation_alias=pydantic.AliasChoices("output", "combined_output"),
+  )
 
   def __str__(self) -> str:
     return self.output
@@ -30,7 +33,7 @@ class RunCommandResult(pydantic.BaseModel):
 class ListDirectoryEntry(pydantic.BaseModel):
   """Single entry in a directory listing."""
 
-  name: str
+  name: str = ""
   is_directory: bool = False
   file_size: int = 0
 
@@ -38,7 +41,10 @@ class ListDirectoryEntry(pydantic.BaseModel):
 class ListDirectoryResult(pydantic.BaseModel):
   """Structured result from a list_directory tool execution."""
 
-  entries: list[ListDirectoryEntry] = pydantic.Field(default_factory=list)
+  entries: list[ListDirectoryEntry] = pydantic.Field(
+      default_factory=list,
+      validation_alias=pydantic.AliasChoices("entries", "results"),
+  )
 
   def __str__(self) -> str:
     parts = []
@@ -96,6 +102,17 @@ class SearchWebResult(pydantic.BaseModel):
     return self.summary
 
 
+class ReadUrlContentResult(pydantic.BaseModel):
+  """Structured result from a read_url_content tool execution."""
+
+  title: str = ""
+  summary: str = ""
+  content_path: str = ""
+
+  def __str__(self) -> str:
+    return self.summary or self.title or self.content_path
+
+
 class TextResult(pydantic.BaseModel):
   """Generic fallback for tools without structured output (e.g. view_file)."""
 
@@ -114,5 +131,6 @@ ToolOutput = (
     | EditFileResult
     | GenerateImageResult
     | SearchWebResult
+    | ReadUrlContentResult
     | TextResult
 )

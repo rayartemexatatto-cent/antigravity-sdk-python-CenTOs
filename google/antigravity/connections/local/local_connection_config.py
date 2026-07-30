@@ -19,6 +19,8 @@ import os
 import pathlib
 import tempfile
 from typing import Any, Callable, Sequence
+import urllib.parse
+import urllib.request
 
 import pydantic
 
@@ -34,8 +36,122 @@ DEFAULT_APP_DATA_DIR = (
     (pathlib.Path("~") / ".gemini" / "antigravity").expanduser().resolve()
 )
 
+# Map from BuiltinTools enum to the canonical proto field name on StepUpdate.
+BUILTIN_TOOL_PROTO_FIELDS: dict[types.BuiltinTools, str] = {
+    types.BuiltinTools.CREATE_FILE: "create_file",
+    types.BuiltinTools.EDIT_FILE: "edit_file",
+    types.BuiltinTools.FIND_FILE: "find_file",
+    types.BuiltinTools.LIST_DIR: "list_directory",
+    types.BuiltinTools.RUN_COMMAND: "run_command",
+    types.BuiltinTools.SEARCH_DIR: "search_directory",
+    types.BuiltinTools.VIEW_FILE: "view_file",
+    types.BuiltinTools.START_SUBAGENT: "invoke_subagent",
+    types.BuiltinTools.GENERATE_IMAGE: "generate_image",
+    types.BuiltinTools.SEARCH_WEB: "search_web",
+    types.BuiltinTools.READ_URL_CONTENT: "read_url_content",
+    types.BuiltinTools.FINISH: "finish",
+}
 
-class LocalAgentConfig(connection.AgentConfig):
+# Reverse map from canonical StepUpdate proto field name to SDK public
+# BuiltinTools value.
+PROTO_FIELD_TO_SDK_NAME: dict[str, str] = {
+    v: k.value for k, v in BUILTIN_TOOL_PROTO_FIELDS.items()
+}
+
+# Argument keys in tool call JSON payloads that carry wire-format URIs
+# (file:///..., cns://...) and must be normalized to clean filesystem paths.
+WIRE_PATH_ARGUMENT_KEYS: frozenset[str] = frozenset(
+    {"path", "file_path", "directory_path", "TargetFile"}
+)
+
+
+def normalize_wire_path(path: str) -> str:
+  """Translates wire-format URIs to clean absolute filesystem paths.
+
+  Paths arrive as file:/// or cns:// URIs over the wire protocol.
+  This converts them to platform-native absolute paths that user code expects.
+  """
+  parsed = urllib.parse.urlparse(path)
+  if parsed.scheme == "file":
+    # urlparse("file:///abs/path").path == "/abs/path"
+    # url2pathname converts URL path to platform-native path
+    return urllib.request.url2pathname(parsed.path)
+  if parsed.scheme == "cns":
+    # urlparse("cns://el-d/home/user/...").netloc == "el-d"
+    # urlparse("cns://el-d/home/user/...").path == "/home/user/..."
+    # Convert to the canonical /cns/<cell>/... absolute path format.
+    return "/cns/" + parsed.netloc + parsed.path
+  return path
+
+
+class BaseLocalAgentConfig(connection.AgentConfig):
+  """Base configuration class for local harness agent configurations."""
+
+  model_config = pydantic.ConfigDict(
+      arbitrary_types_allowed=True, validate_assignment=True
+  )
+
+  capabilities: types.CapabilitiesConfig = pydantic.Field(
+      default_factory=types.CapabilitiesConfig
+  )
+  policies: list[policy.Policy] = pydantic.Field(
+      default_factory=policy.confirm_run_command
+  )
+  env: dict[str, str] | None = pydantic.Field(
+      default=None,
+      description=(
+          "Optional custom environment variables for the localharness"
+          " subprocess."
+      ),
+  )
+  workspaces: list[str] = pydantic.Field(default_factory=lambda: [os.getcwd()])
+
+  @pydantic.field_validator("app_data_dir")
+  def _validate_app_data_dir(cls, v: str | None) -> str | None:  # pylint: disable=no-self-argument
+    if v is not None and not os.path.isabs(v):
+      raise ValueError(f"app_data_dir must be an absolute path, got '{v}'")
+    return v
+
+  @pydantic.model_validator(mode="after")
+  def _apply_workspace_policies(self) -> "BaseLocalAgentConfig":
+    """Prepends workspace-scoping policies when workspaces are configured."""
+    other_policies = [
+        p for p in self.policies if getattr(p, "name", "") != "workspace_only"
+    ]
+    if self.workspaces:
+      app_data_path = self.app_data_dir or DEFAULT_APP_DATA_DIR
+      resolved_app_data_dir = pathlib.Path(app_data_path).expanduser().resolve()
+      normalized_workspaces = [
+          normalize_wire_path(ws) for ws in self.workspaces
+      ]
+      allowed_paths = [*normalized_workspaces, str(resolved_app_data_dir)]
+      self.__dict__["policies"] = (
+          policy.workspace_only(allowed_paths) + other_policies
+      )
+    else:
+      self.__dict__["policies"] = other_policies
+    return self
+
+  def _get_system_instructions(self) -> types.SystemInstructions | None:
+    """Returns the system instructions, normalizing shorthand if needed."""
+    if isinstance(self.system_instructions, str):
+      return types.TemplatedSystemInstructions(
+          sections=[
+              types.SystemInstructionSection(content=self.system_instructions)
+          ]
+      )
+    return self.system_instructions
+
+  def _get_or_create_save_dir(self) -> str:
+    """Returns save_dir, generating a temporary one if not specified."""
+    save_dir = self.save_dir
+    if save_dir is None:
+      save_dir = tempfile.mkdtemp(prefix="antigravity_")
+      logging.info("No save_dir specified; using %s", save_dir)
+    return save_dir
+
+
+class LocalAgentConfig(BaseLocalAgentConfig):
   """Configuration for the local harness backend.
 
   This is the default config for the Agent class. It uses the
@@ -49,18 +165,6 @@ class LocalAgentConfig(connection.AgentConfig):
   restricted to those directories via ``policy.workspace_only()``.
   """
 
-  model_config = pydantic.ConfigDict(
-      arbitrary_types_allowed=True, validate_assignment=True
-  )
-
-  capabilities: types.CapabilitiesConfig = pydantic.Field(
-      default_factory=types.CapabilitiesConfig
-  )
-  policies: list[policy.Policy] = pydantic.Field(
-      default_factory=policy.confirm_run_command
-  )
-  workspaces: list[str] = pydantic.Field(default_factory=lambda: [os.getcwd()])
-
   # Top-level shorthand fields — flow into models.
   model: str | types.ModelTarget | None = None
   models: list[types.ModelTarget] | None = None
@@ -69,7 +173,7 @@ class LocalAgentConfig(connection.AgentConfig):
   project: str | None = None
   location: str | None = None
 
-  def __init__(
+  def __init__(  # pylint: disable=super-init-not-called
       self,
       *,
       system_instructions: str | types.SystemInstructions | None = None,
@@ -79,14 +183,18 @@ class LocalAgentConfig(connection.AgentConfig):
       hooks: list[hooks_mod.Hook] | None = None,
       triggers: list[triggers_mod.Trigger] | None = None,
       mcp_servers: list[types.McpServerConfig] | None = None,
+      subagents: list[types.SubagentConfig] | None = None,
       workspaces: list[str] | None = None,
+      env: dict[str, str] | None = None,
       conversation_id: str | None = None,
+      session_continuation_mode: types.SessionContinuationMode | None = None,
       save_dir: str | None = None,
       app_data_dir: str | None = None,
       response_schema: (
           dict[str, Any] | type[pydantic.BaseModel] | str | None
       ) = None,
       skills_paths: list[str] | None = None,
+      retry_config: types.RetryConfig | None = None,
       model: str | types.ModelTarget | None = None,
       models: list[types.ModelTarget] | None = None,
       api_key: str | None = None,
@@ -95,6 +203,12 @@ class LocalAgentConfig(connection.AgentConfig):
       location: str | None = None,
       **kwargs: Any,
   ):
+    if vertex is None and (
+        os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("true", "1")
+        or os.environ.get("GOOGLE_GENAI_USE_ENTERPRISE", "").lower()
+        in ("true", "1")
+    ):
+      vertex = True
 
     init_data = {
         k: v
@@ -104,14 +218,10 @@ class LocalAgentConfig(connection.AgentConfig):
     if "kwargs" in init_data:
       kwargs_dict = init_data.pop("kwargs")
       if isinstance(kwargs_dict, dict):
-        init_data.update(kwargs_dict)
+        init_data.update(
+            {k: v for k, v in kwargs_dict.items() if v is not None}
+        )
     pydantic.BaseModel.__init__(self, **init_data)
-
-  @pydantic.field_validator("app_data_dir")
-  def _validate_app_data_dir(cls, v: str | None) -> str | None:  # pylint: disable=no-self-argument
-    if v is not None and not os.path.isabs(v):
-      raise ValueError(f"app_data_dir must be an absolute path, got '{v}'")
-    return v
 
   def _build_shorthand_endpoint(self) -> types.ModelEndpoint | None:
     """Builds the custom endpoint from connection shorthand fields."""
@@ -190,43 +300,6 @@ class LocalAgentConfig(connection.AgentConfig):
     self.__dict__["models"] = self._merge_models_list()
     return self
 
-  @pydantic.model_validator(mode="after")
-  def _apply_workspace_policies(self) -> "LocalAgentConfig":
-    """Prepends workspace-scoping policies when workspaces are configured.
-
-    Always prepends — even when the user sets explicit policies — so that
-    file operations are always restricted to the configured workspaces.
-    Users who want truly unrestricted access should set ``workspaces=[]``.
-    """
-    if self.workspaces:
-      # Automatically include the app data directory in the workspace allowlist
-      app_data_path = self.app_data_dir or DEFAULT_APP_DATA_DIR
-      resolved_app_data_dir = pathlib.Path(app_data_path).expanduser().resolve()
-      allowed_paths = [*self.workspaces, str(resolved_app_data_dir)]
-
-      self.__dict__["policies"] = (
-          policy.workspace_only(allowed_paths) + self.policies
-      )
-    return self
-
-  def _get_system_instructions(self) -> types.SystemInstructions | None:
-    """Returns the system instructions, normalizing shorthand if needed."""
-    if isinstance(self.system_instructions, str):
-      return types.TemplatedSystemInstructions(
-          sections=[
-              types.SystemInstructionSection(content=self.system_instructions)
-          ]
-      )
-    return self.system_instructions
-
-  def _get_or_create_save_dir(self) -> str:
-    """Returns save_dir, generating a temporary one if not specified."""
-    save_dir = self.save_dir
-    if save_dir is None:
-      save_dir = tempfile.mkdtemp(prefix="antigravity_")
-      logging.info("No save_dir specified; using %s", save_dir)
-    return save_dir
-
   def create_strategy(
       self,
       *,
@@ -244,10 +317,14 @@ class LocalAgentConfig(connection.AgentConfig):
         system_instructions=self._get_system_instructions(),
         capabilities_config=self.capabilities,
         conversation_id=self.conversation_id,
+        session_continuation_mode=self.session_continuation_mode,
         save_dir=self._get_or_create_save_dir(),
         workspaces=self.workspaces,
         app_data_dir=self.app_data_dir,
         skills_paths=self.skills_paths,
         mcp_servers=self.mcp_servers,
+        env=self.env,
         subagents=self.subagents,
+        debug_config=self.debug_config,
+        retry_config=self.retry_config,
     )

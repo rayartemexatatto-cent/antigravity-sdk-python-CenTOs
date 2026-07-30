@@ -33,6 +33,7 @@ Includes:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import sys
 import threading
 from typing import Any
@@ -42,6 +43,11 @@ from google.antigravity.connections import connection as connection_module
 from google.antigravity.hooks import hooks
 from google.antigravity.hooks import policy as policy_module
 from google.antigravity.types import QuestionResponse
+
+_global_active_spinner: Spinner | None = None
+_active_spinner: contextvars.ContextVar[Spinner | None] = (
+    contextvars.ContextVar("_active_spinner", default=None)
+)
 
 
 async def async_input(prompt: str = "") -> str:
@@ -58,6 +64,12 @@ async def async_input(prompt: str = "") -> str:
   Returns:
     The user input string.
   """
+  spinner = Spinner.get_active()
+  was_running = False
+  if spinner and spinner.is_running:
+    spinner.pause()
+    was_running = True
+
   loop = asyncio.get_running_loop()
   future = loop.create_future()
 
@@ -73,7 +85,11 @@ async def async_input(prompt: str = "") -> str:
   thread = threading.Thread(target=_read_input, daemon=True)
   thread.start()
 
-  return await future
+  try:
+    return await future
+  finally:
+    if was_running and spinner:
+      spinner.resume()
 
 
 class Spinner:
@@ -89,26 +105,81 @@ class Spinner:
     # Note: Ancient cmd environments that lack ANSI support will output escape
     # codes literally; users are expected to use modern terminal systems.
     self._enabled = sys.stdout.isatty()
+    self._token: contextvars.Token[Any] | None = None
+
+  @property
+  def is_running(self) -> bool:
+    """Returns whether the spinner is currently running."""
+    return self._running
 
   def update(self, message: str) -> None:
     """Updates the spinner display message."""
     self._message = message
 
+  def pause(self) -> None:
+    """Pauses the spinner output and clears the current line."""
+    if not self._enabled or not self._running:
+      return
+    self._running = False
+    if self._task:
+      self._task.cancel()
+      self._task = None
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+
+  def resume(self) -> None:
+    """Resumes the spinner output."""
+    if not self._enabled or self._running:
+      return
+    self._running = True
+    self._task = asyncio.create_task(self._spin())
+
+  @classmethod
+  def get_active(cls) -> Spinner | None:
+    """Returns the currently active Spinner instance, if any."""
+    return _active_spinner.get() or _global_active_spinner
+
+  @classmethod
+  def pause_active(cls) -> None:
+    """Pauses the currently active spinner, if any."""
+    spinner = cls.get_active()
+    if spinner:
+      spinner.pause()
+
+  @classmethod
+  def resume_active(cls) -> None:
+    """Resumes the currently active spinner, if any."""
+    spinner = cls.get_active()
+    if spinner:
+      spinner.resume()
+
   async def _spin(self) -> None:
     idx = 0
-    while self._running:
-      sys.stdout.write(f"\r\033[K{self._frames[idx]} {self._message}")
-      sys.stdout.flush()
-      idx = (idx + 1) % len(self._frames)
-      await asyncio.sleep(0.08)
+    try:
+      while self._running:
+        sys.stdout.write(f"\r\033[K{self._frames[idx]} {self._message}")
+        sys.stdout.flush()
+        idx = (idx + 1) % len(self._frames)
+        await asyncio.sleep(0.08)
+    except asyncio.CancelledError:
+      pass
 
   async def __aenter__(self) -> "Spinner":
+    global _global_active_spinner
+    _global_active_spinner = self
+    self._token = _active_spinner.set(self)
     if self._enabled:
       self._running = True
       self._task = asyncio.create_task(self._spin())
     return self
 
   async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    global _global_active_spinner
+    if _global_active_spinner is self:
+      _global_active_spinner = None
+    if self._token is not None:
+      _active_spinner.reset(self._token)
+      self._token = None
     if not self._enabled:
       return
     self._running = False
@@ -118,6 +189,7 @@ class Spinner:
         await self._task
       except asyncio.CancelledError:
         pass
+      self._task = None
     sys.stdout.write("\r\033[K")
     sys.stdout.flush()
 
@@ -137,19 +209,23 @@ class ToolConfirmationHook(hooks.PreToolCallDecideHook):
     Returns:
       A HookResult indicating whether to allow or deny execution.
     """
-    print(f"\nTool execution requested: {data.name}")
-
-    if data.args:
-      print(f"Arguments: {data.args}")
-
+    Spinner.pause_active()
     try:
-      ans = await async_input("Allow execution? (y/n) [n]: ")
-    except EOFError:
-      ans = "n"
+      print(f"\nTool execution requested: {data.name}")
 
-    if ans.strip().lower() in ("y", "yes"):
-      return hooks.HookResult(allow=True)
-    return hooks.HookResult(allow=False, message="User denied tool call.")
+      if data.args:
+        print(f"Arguments: {data.args}")
+
+      try:
+        ans = await async_input("Allow execution? (y/n) [n]: ")
+      except EOFError:
+        ans = "n"
+
+      if ans.strip().lower() in ("y", "yes"):
+        return hooks.HookResult(allow=True)
+      return hooks.HookResult(allow=False, message="User denied tool call.")
+    finally:
+      Spinner.resume_active()
 
 
 async def ask_user_handler(tc: types.ToolCall) -> bool:
@@ -163,16 +239,20 @@ async def ask_user_handler(tc: types.ToolCall) -> bool:
   Returns:
     True if the user allows execution, False otherwise.
   """
-  print(f"\nPolicy check: Tool execution requested: {tc.name}")
-  if tc.args:
-    print(f"Arguments: {tc.args}")
-
+  Spinner.pause_active()
   try:
-    ans = await async_input("Allow execution? (y/n) [n]: ")
-  except EOFError:
-    ans = "n"
+    print(f"\nPolicy check: Tool execution requested: {tc.name}")
+    if tc.args:
+      print(f"Arguments: {tc.args}")
 
-  return ans.strip().lower() in ("y", "yes")
+    try:
+      ans = await async_input("Allow execution? (y/n) [n]: ")
+    except EOFError:
+      ans = "n"
+
+    return ans.strip().lower() in ("y", "yes")
+  finally:
+    Spinner.resume_active()
 
 
 class AskQuestionHook(hooks.OnInteractionHook):
@@ -190,50 +270,54 @@ class AskQuestionHook(hooks.OnInteractionHook):
     Returns:
       A QuestionHookResult containing the user's responses.
     """
-    questions = data.questions
-    responses = []
+    Spinner.pause_active()
     try:
-      for q in questions:
-        print(f"\nQuestion: {q.question}")
-        options = list(q.options) if hasattr(q, "options") else []
-        for idx, opt in enumerate(options):
-          print(f"  {idx + 1}. {opt.text}")
+      questions = data.questions
+      responses = []
+      try:
+        for q in questions:
+          print(f"\nQuestion: {q.question}")
+          options = list(q.options) if hasattr(q, "options") else []
+          for idx, opt in enumerate(options):
+            print(f"  {idx + 1}. {opt.text}")
 
-        ans = await async_input("Response: ")
-        ans = ans.strip()
-        if not ans:
-          responses.append(QuestionResponse(skipped=True))
-          continue
+          ans = await async_input("Response: ")
+          ans = ans.strip()
+          if not ans:
+            responses.append(QuestionResponse(skipped=True))
+            continue
 
-        # Try to match by option number
-        matched_id = None
-        if options:
-          try:
-            selected_idx = int(ans) - 1
-            if 0 <= selected_idx < len(options):
-              matched_id = options[selected_idx].id
-          except ValueError:
-            pass
+          # Try to match by option number
+          matched_id = None
+          if options:
+            try:
+              selected_idx = int(ans) - 1
+              if 0 <= selected_idx < len(options):
+                matched_id = options[selected_idx].id
+            except ValueError:
+              pass
 
-          # Try to match by exact option text or ID
-          if not matched_id:
-            for opt in options:
-              if (
-                  ans.lower() == opt.text.lower()
-                  or ans.lower() == opt.id.lower()
-              ):
-                matched_id = opt.id
-                break
+            # Try to match by exact option text or ID
+            if not matched_id:
+              for opt in options:
+                if (
+                    ans.lower() == opt.text.lower()
+                    or ans.lower() == opt.id.lower()
+                ):
+                  matched_id = opt.id
+                  break
 
-        if matched_id:
-          responses.append(QuestionResponse(selected_option_ids=[matched_id]))
-        else:
-          responses.append(QuestionResponse(freeform_response=ans))
+          if matched_id:
+            responses.append(QuestionResponse(selected_option_ids=[matched_id]))
+          else:
+            responses.append(QuestionResponse(freeform_response=ans))
 
-    except EOFError:
-      return hooks.QuestionHookResult(responses=responses, cancelled=True)
+      except EOFError:
+        return hooks.QuestionHookResult(responses=responses, cancelled=True)
 
-    return hooks.QuestionHookResult(responses=responses)
+      return hooks.QuestionHookResult(responses=responses)
+    finally:
+      Spinner.resume_active()
 
 
 def _upgrade_policies_list(policies: list[Any]) -> list[Any]:

@@ -574,14 +574,21 @@ class BuiltinToolsTest(parameterized.TestCase):
   @parameterized.named_parameters(
       ("list_dir", types.BuiltinTools.LIST_DIR, "list_directory"),
       ("search_dir", types.BuiltinTools.SEARCH_DIR, "search_directory"),
+      ("find_file", types.BuiltinTools.FIND_FILE, "find_file"),
       ("view_file", types.BuiltinTools.VIEW_FILE, "view_file"),
       ("create_file", types.BuiltinTools.CREATE_FILE, "create_file"),
       ("edit_file", types.BuiltinTools.EDIT_FILE, "edit_file"),
       ("run_command", types.BuiltinTools.RUN_COMMAND, "run_command"),
       ("ask_question", types.BuiltinTools.ASK_QUESTION, "ask_question"),
       ("search_web", types.BuiltinTools.SEARCH_WEB, "search_web"),
+      (
+          "read_url_content",
+          types.BuiltinTools.READ_URL_CONTENT,
+          "read_url_content",
+      ),
       ("start_subagent", types.BuiltinTools.START_SUBAGENT, "start_subagent"),
       ("generate_image", types.BuiltinTools.GENERATE_IMAGE, "generate_image"),
+      ("finish", types.BuiltinTools.FINISH, "finish"),
   )
   def test_enum_values(self, enum_member, expected_value):
     """Verifies each enum member has the expected string value."""
@@ -709,6 +716,28 @@ class AntigravityConnectionErrorTest(unittest.TestCase):
     self.assertEqual(str(err), "timeout")
 
 
+class ToolExecutionErrorTest(unittest.TestCase):
+  """Validates the ToolExecutionError exception class."""
+
+  def test_basic_construction(self):
+    """Verifies construction with required arguments and default server_name=None."""
+    err = types.ToolExecutionError("command failed", tool_name="run_command")
+    self.assertIsInstance(err, RuntimeError)
+    self.assertEqual(str(err), "command failed")
+    self.assertEqual(err.tool_name, "run_command")
+    self.assertIsNone(err.server_name)
+
+  def test_explicit_server_name(self):
+    """Verifies construction with explicit server_name."""
+    err = types.ToolExecutionError(
+        "query failed", tool_name="mcp_tool", server_name="mcp_server"
+    )
+    self.assertIsInstance(err, RuntimeError)
+    self.assertEqual(str(err), "query failed")
+    self.assertEqual(err.tool_name, "mcp_tool")
+    self.assertEqual(err.server_name, "mcp_server")
+
+
 class ImageTest(unittest.TestCase):
   """Tests for the Image content attachment primitive and its validators."""
 
@@ -738,8 +767,20 @@ class ImageTest(unittest.TestCase):
       self.assertEqual(img.mime_type, "image/png")
       self.assertEqual(img.description, "profile photo")
 
+  def test_from_file_inference_failure_raises(self):
+    """Verifies that from_file loader raises ValueError when extension is unknown."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+      tmp_file = pathlib.Path(tmpdir) / "photo.unknown"
+      fake_bytes = b"some_bytes"
+      tmp_file.write_bytes(fake_bytes)
 
-class AudioTest(unittest.TestCase):
+      with self.assertRaisesRegex(
+          ValueError, "Could not infer a valid MIME type"
+      ):
+        types.Image.from_file(tmp_file)
+
+
+class AudioTest(parameterized.TestCase):
   """Validates the Audio content attachment primitive and its validators."""
 
   def test_basic_construction(self):
@@ -747,6 +788,27 @@ class AudioTest(unittest.TestCase):
     audio = types.Audio(data=b"mp3_data", mime_type="audio/mp3")
     self.assertEqual(audio.data, b"mp3_data")
     self.assertEqual(audio.mime_type, "audio/mp3")
+
+  @parameterized.parameters(
+      "audio/wav",
+      "audio/x-wav",
+      "audio/wave",
+      "audio/vnd.wave",
+      "audio/mp3",
+      "audio/mp4",
+      "audio/webm",
+      "audio/aac",
+      "audio/ogg",
+      "audio/flac",
+      "audio/opus",
+      "audio/mpeg",
+      "audio/m4a",
+      "audio/l16",
+  )
+  def test_supported_mime_types(self, mime_type: str):
+    """Verifies that all supported Audio MIME types pass validation."""
+    audio = types.Audio(data=b"sample_data", mime_type=mime_type)
+    self.assertEqual(audio.mime_type, mime_type)
 
   def test_unsupported_mime_type_raises(self):
     """Verifies that an unsupported Audio MIME type triggers ValidationError."""
@@ -1531,12 +1593,109 @@ class SubagentConfigTest(unittest.TestCase):
     self.assertIsNone(sub.capabilities)
     self.assertEqual(sub.tools, [])
 
+  def test_custom_system_instructions(self):
+    custom_si = types.CustomSystemInstructions(text="Full custom prompt")
+    sub = types.SubagentConfig(
+        name="custom_helper",
+        description="custom helper agent",
+        system_instructions=custom_si,
+    )
+    self.assertEqual(sub.system_instructions, custom_si)
+
+  def test_templated_system_instructions(self):
+    templated_si = types.TemplatedSystemInstructions(
+        identity="Helper identity",
+        sections=[types.SystemInstructionSection(content="Section 1")],
+    )
+    sub = types.SubagentConfig(
+        name="templated_helper",
+        description="templated helper agent",
+        system_instructions=templated_si,
+    )
+    self.assertEqual(sub.system_instructions, templated_si)
+
   def test_required_fields(self):
     with self.assertRaises(pydantic.ValidationError):
       types.SubagentConfig(**{"name": "helper"})  # Missing description
 
     with self.assertRaises(pydantic.ValidationError):
       types.SubagentConfig(**{"description": "helpful agent"})  # Missing name
+
+
+class UsageMetadataTest(unittest.TestCase):
+  """Tests for the UsageMetadata class."""
+
+  def test_add_operator(self):
+    """Verifies that __add__ sums token usage fields correctly."""
+    u1 = types.UsageMetadata(
+        prompt_token_count=100,
+        cached_content_token_count=50,
+        candidates_token_count=30,
+        thoughts_token_count=20,
+        total_token_count=150,
+    )
+    u2 = types.UsageMetadata(
+        prompt_token_count=200,
+        cached_content_token_count=10,
+        candidates_token_count=40,
+        thoughts_token_count=5,
+        total_token_count=245,
+    )
+    res = u1 + u2
+    self.assertEqual(res.prompt_token_count, 300)
+    self.assertEqual(res.cached_content_token_count, 60)
+    self.assertEqual(res.candidates_token_count, 70)
+    self.assertEqual(res.thoughts_token_count, 25)
+    self.assertEqual(res.total_token_count, 395)
+
+  def test_add_operator_with_none(self):
+    """Verifies that __add__ treats None fields as zero."""
+    u1 = types.UsageMetadata(
+        prompt_token_count=100,
+    )
+    u2 = types.UsageMetadata(
+        candidates_token_count=50,
+    )
+    res = u1 + u2
+    self.assertEqual(res.prompt_token_count, 100)
+    self.assertEqual(res.cached_content_token_count, 0)
+    self.assertEqual(res.candidates_token_count, 50)
+    self.assertEqual(res.thoughts_token_count, 0)
+    self.assertEqual(res.total_token_count, 0)
+
+  def test_add_operator_invalid_type(self):
+    """Verifies that __add__ returns NotImplemented for invalid types."""
+    u = types.UsageMetadata(prompt_token_count=10)
+    self.assertEqual(u.__add__(1), NotImplemented)
+
+
+class RetryConfigTest(unittest.TestCase):
+  """Tests for RetryConfig presets and explicit configuration."""
+
+  def test_benchmark_preset(self):
+    cfg = types.RetryConfig.benchmark()
+    self.assertIsNotNone(cfg.api_retry)
+    self.assertEqual(cfg.api_retry.max_retries, 2**32 - 1)
+    self.assertEqual(cfg.api_retry.initial_sleep_duration_ms, 1000)
+    self.assertIsNone(cfg.model_output_retry)
+
+  def test_explicit_models(self):
+    cfg = types.RetryConfig(
+        api_retry=types.ModelAPIRetryConfig(max_retries=5),
+        model_output_retry=types.ModelOutputRetryConfig(max_retries=3),
+    )
+    self.assertEqual(cfg.api_retry.max_retries, 5)
+    self.assertEqual(cfg.model_output_retry.max_retries, 3)
+
+  def test_uint32_validation(self):
+    with self.assertRaises(pydantic.ValidationError):
+      types.ModelAPIRetryConfig(max_retries=-1)
+    with self.assertRaises(pydantic.ValidationError):
+      types.ModelAPIRetryConfig(max_retries=2**32)
+    with self.assertRaises(pydantic.ValidationError):
+      types.ModelOutputRetryConfig(max_retries=-5)
+    with self.assertRaises(pydantic.ValidationError):
+      types.ModelOutputRetryConfig(max_retries=2**32)
 
 
 if __name__ == "__main__":

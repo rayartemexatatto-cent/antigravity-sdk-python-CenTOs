@@ -683,23 +683,8 @@ class _PolicyDecideHook(hooks.PreToolCallDecideHook):
   def __init__(
       self,
       buckets: Sequence[Sequence[Policy]],
-      *,
-      server_names: Sequence[str] | None = None,
   ):
     self._buckets = buckets
-    # Sort descending by length to guarantee longest-match parsing (security)
-    self._server_names = sorted(server_names or [], key=len, reverse=True)
-
-  def _parse_mcp_tool(self, tool_name: str) -> tuple[str, str] | None:
-    """Securely parses 'mcp_server_tool' into ('server', 'tool') using known servers."""
-    if not tool_name.startswith("mcp_"):
-      return None
-
-    rest = tool_name[4:]
-    for server in self._server_names:
-      if rest.startswith(f"{server}_"):
-        return server, rest[len(server) + 1 :]
-    return None
 
   async def _evaluate_policy(
       self, p: Policy, tool_call: types.ToolCall
@@ -714,10 +699,8 @@ class _PolicyDecideHook(hooks.PreToolCallDecideHook):
       A HookResult if the policy matches and a decision is made, or None
       if the policy does not match. Propagates exceptions during evaluation.
     """
-    mcp_info = self._parse_mcp_tool(tool_call.name)
-    if mcp_info:
-      server, tool = mcp_info
-      call_target = f"{server}/{tool}"
+    if tool_call.server_name:
+      call_target = f"{tool_call.server_name}/{tool_call.name}"
       is_mcp = True
     else:
       call_target = tool_call.name
@@ -900,5 +883,4 @@ def enforce(
   for p in flat_policies:
     buckets[_bucket_index(p)].append(p)
 
-  server_names = [s.name for s in mcp_servers] if mcp_servers else []
-  return _PolicyDecideHook(buckets, server_names=server_names)
+  return _PolicyDecideHook(buckets)

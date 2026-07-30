@@ -17,8 +17,7 @@ import json
 import unittest
 from unittest import mock
 
-from google.antigravity.connections.local import local_connection
-from google.antigravity.connections.local import localharness_pb2
+from google.antigravity.proto import localharness_pb2
 from google.antigravity.connections.local import test_utils
 from google.antigravity.tools import tool_runner
 

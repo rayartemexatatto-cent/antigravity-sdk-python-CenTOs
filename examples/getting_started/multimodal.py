@@ -15,8 +15,11 @@
 """Multimodal example for Google Antigravity SDK.
 
 This example demonstrates:
-- Multimodal input: Passing images and documents to the agent.
+- Multimodal input: Passing images, documents, and audio to the agent.
 - Multimodal output: Enabling the agent to generate images.
+- Multimodal tool output: A custom tool returning media (an image), which is
+  delivered to the model as supplemental media so it can "see" what the tool
+  produced.
 
 To run:
   python multimodal.py
@@ -25,7 +28,9 @@ Criteria for correct script performance:
   1. The script exits cleanly with return code 0 (no unhandled exceptions).
   2. The agent produces a non-empty description of the provided image.
   3. The agent produces a non-empty summary of the provided document.
-  4. The agent attempts to generate an image when asked.
+  4. The agent produces a response for the provided audio file.
+  5. The agent attempts to generate an image when asked.
+  6. The agent describes the image returned by the `load_example_image` tool.
 """
 
 import asyncio
@@ -42,6 +47,7 @@ async def main() -> None:
   resources_dir = os.path.join(script_dir, "..", "resources")
   image_path = os.path.join(resources_dir, "example_image.png")
   doc_path = os.path.join(resources_dir, "sample_doc.txt")
+  audio_path = os.path.join(resources_dir, "sample_audio.wav")
 
   # Multimodal Input: Image
   print("  --- Multimodal Input: Image ---")
@@ -62,6 +68,15 @@ async def main() -> None:
     response = await my_agent.chat(prompt)
     print(f"  Agent: {await response.text()}\n")
 
+  # Multimodal Input: Audio
+  print("  --- Multimodal Input: Audio ---")
+  async with Agent(config) as my_agent:
+    audio = types.Audio.from_file(audio_path)
+    prompt = ["Transcribe or describe this audio clip", audio]
+    print(f"  User: {prompt[0]}")
+    response = await my_agent.chat(prompt)
+    print(f"  Agent: {await response.text()}\n")
+
   # Multimodal Output: Image Generation
   print("  --- Multimodal Output: Image Generation ---")
   gen_config = LocalAgentConfig(
@@ -78,6 +93,23 @@ async def main() -> None:
     )
     print(f"  User: {prompt}")
     response = await gen_agent.chat(prompt)
+    print(f"  Agent: {await response.text()}\n")
+
+  # Multimodal Tool Output: a tool that returns media.
+  # A custom tool can return media (e.g. a types.Image) alongside text. The
+  # media is delivered to the model as supplemental media, so the model can see
+  # what the tool produced -- no follow-up turn required.
+  print("  --- Multimodal Tool Output: a tool returns an image ---")
+
+  def load_example_image() -> list[object]:
+    """Loads the example image so you can see it."""
+    return ["Here is the requested image.", types.Image.from_file(image_path)]
+
+  tool_config = LocalAgentConfig(tools=[load_example_image])
+  async with Agent(tool_config) as tool_agent:
+    prompt = "Call load_example_image, then describe what is in the image."
+    print(f"  User: {prompt}")
+    response = await tool_agent.chat(prompt)
     print(f"  Agent: {await response.text()}\n")
 
 

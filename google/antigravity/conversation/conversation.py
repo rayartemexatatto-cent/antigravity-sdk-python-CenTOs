@@ -44,27 +44,6 @@ def _zero_usage() -> types.UsageMetadata:
   )
 
 
-def _add_usage(
-    target: types.UsageMetadata, source: types.UsageMetadata
-) -> None:
-  """Adds source usage counts into target, treating None as zero."""
-  target.prompt_token_count = (target.prompt_token_count or 0) + (
-      source.prompt_token_count or 0
-  )
-  target.cached_content_token_count = (
-      target.cached_content_token_count or 0
-  ) + (source.cached_content_token_count or 0)
-  target.candidates_token_count = (target.candidates_token_count or 0) + (
-      source.candidates_token_count or 0
-  )
-  target.thoughts_token_count = (target.thoughts_token_count or 0) + (
-      source.thoughts_token_count or 0
-  )
-  target.total_token_count = (target.total_token_count or 0) + (
-      source.total_token_count or 0
-  )
-
-
 class Conversation:
   """Stateful session wrapping a single conversation with the agent.
 
@@ -99,7 +78,7 @@ class Conversation:
       if step.type == types.StepType.COMPACTION:
         self._compaction_indices.append(len(self._steps) - 1)
       if step.usage_metadata:
-        _add_usage(self._cumulative_usage, step.usage_metadata)
+        self._cumulative_usage += step.usage_metadata
       self._enforce_max_history()
 
   @classmethod
@@ -345,11 +324,11 @@ class Conversation:
 
   def _accumulate_usage(self, usage: types.UsageMetadata) -> None:
     """Adds per-step usage counts to the session-level cumulative totals."""
-    _add_usage(self._cumulative_usage, usage)
+    self._cumulative_usage += usage
 
     if self._turn_usage is None:
       self._turn_usage = _zero_usage()
-    _add_usage(self._turn_usage, usage)
+    self._turn_usage += usage
 
   # ---------------------------------------------------------------------------
   # Lifecycle

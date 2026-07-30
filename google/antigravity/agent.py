@@ -14,13 +14,14 @@
 
 """Layer 1 API for Antigravity SDK."""
 
+from collections.abc import Sequence
 import contextlib
 import logging
 from typing import cast
 
 from google.antigravity import types
 from google.antigravity.connections import connection as connection_module
-from google.antigravity.conversation import conversation
+from google.antigravity.conversation import conversation as conversation_lib
 from google.antigravity.hooks import hook_runner
 from google.antigravity.hooks import policy
 from google.antigravity.tools import tool_context
@@ -115,7 +116,7 @@ class Agent:
 
       logging.info("Starting connection and creating conversation...")
       self._conversation = await self._exit_stack.enter_async_context(
-          conversation.Conversation.create(self._strategy)
+          conversation_lib.Conversation.create(self._strategy)
       )
 
       # Start triggers via TriggerRunner.
@@ -148,6 +149,9 @@ class Agent:
         exc_type: The exception type, if any.
         exc_val: The exception value, if any.
         exc_tb: The traceback, if any.
+
+    Returns:
+        True if the exception was suppressed, False or None otherwise.
     """
     logging.info("Stopping Agent session")
     return await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
@@ -160,7 +164,26 @@ class Agent:
 
     Returns:
         The final response from the agent.
+
+    Raises:
+        ValueError: If prompt is None, an empty or whitespace-only string, or an
+          empty sequence / sequence containing only empty or whitespace strings.
     """
+    if prompt is None or (isinstance(prompt, str) and not prompt.strip()):
+      raise ValueError(
+          f"chat() requires a non-empty message string. Got: {prompt!r}"
+      )
+    if (
+        isinstance(prompt, Sequence)
+        and not isinstance(prompt, str)
+        and (
+            not prompt
+            or all(isinstance(p, str) and not p.strip() for p in prompt)
+        )
+    ):
+      raise ValueError(
+          f"chat() requires non-empty message content. Got: {prompt!r}"
+      )
     return await self.conversation.chat(prompt)
 
   @property
@@ -169,7 +192,7 @@ class Agent:
     return self._conversation is not None
 
   @property
-  def conversation(self) -> conversation.Conversation:
+  def conversation(self) -> conversation_lib.Conversation:
     """Returns the active Conversation session.
 
     Use this for advanced session introspection: history, turn count,

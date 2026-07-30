@@ -16,6 +16,7 @@
 
 import asyncio
 import threading
+from typing import Optional, Union
 from unittest import mock
 
 from absl.testing import absltest
@@ -245,6 +246,93 @@ class ToolRunnerTest(absltest.TestCase):
 
     result = asyncio.run(runner.execute("sync_callable", arg1="World"))
     self.assertEqual(result, "Callable World")
+
+  def test_register_callable_object_no_name(self):
+    """Verifies registering a callable object without name uses class name."""
+
+    class SyncCallable:
+
+      def __call__(self, arg1: str) -> str:
+        return f"Callable {arg1}"
+
+    tool = SyncCallable()
+    runner = tool_runner.ToolRunner()
+    runner.register(tool)
+    self.assertEqual(runner.tool_names, ["SyncCallable"])
+
+  def test_tool_with_schema_no_name(self):
+    """Verifies ToolWithSchema handles callable object without __name__."""
+
+    class SyncCallable:
+
+      def __call__(self, arg1: str) -> str:
+        return f"Callable {arg1}"
+
+    tool = SyncCallable()
+    wrapped = tool_runner.ToolWithSchema(tool, {"type": "object"})
+    self.assertEqual(wrapped.__name__, "SyncCallable")
+
+  def test_coerce_args_basic_types(self):
+    """Verifies that _coerce_args converts strings to basic Python types."""
+
+    def _typed_fn(a: int, b: float, c: bool, d: str) -> None:
+      del a, b, c, d
+
+    runner = tool_runner.ToolRunner([_typed_fn])
+    coerced = runner._coerce_args(
+        _typed_fn, {"a": "5", "b": "2.5", "c": "true", "d": "hello"}
+    )
+    self.assertEqual(coerced, {"a": 5, "b": 2.5, "c": True, "d": "hello"})
+    self.assertIsInstance(coerced["a"], int)
+    self.assertIsInstance(coerced["b"], float)
+    self.assertIsInstance(coerced["c"], bool)
+    self.assertIsInstance(coerced["d"], str)
+
+  def test_coerce_args_optional_and_union(self):
+    """Verifies that _coerce_args handles Optional and Union types."""
+
+    def _complex_fn(x: Optional[int], y: Union[int, float]) -> None:
+      del x, y
+
+    runner = tool_runner.ToolRunner([_complex_fn])
+    coerced = runner._coerce_args(_complex_fn, {"x": "10", "y": "3.14"})
+    self.assertEqual(coerced, {"x": 10, "y": 3.14})
+    self.assertIsInstance(coerced["x"], int)
+    self.assertIsInstance(coerced["y"], float)
+
+    coerced_none = runner._coerce_args(_complex_fn, {"x": None, "y": 42})
+    self.assertEqual(coerced_none, {"x": None, "y": 42})
+
+  def test_coerce_args_fallback_on_error(self):
+    """Verifies that _coerce_args retains original values when conversion fails."""
+
+    def _int_fn(count: int) -> None:
+      del count
+
+    runner = tool_runner.ToolRunner([_int_fn])
+    coerced = runner._coerce_args(_int_fn, {"count": "not_an_int"})
+    self.assertEqual(coerced, {"count": "not_an_int"})
+
+  def test_coerce_args_with_tool_with_schema(self):
+    """Verifies that _coerce_args unwraps ToolWithSchema."""
+
+    def _typed_tool(val: int) -> int:
+      return val * 2
+
+    wrapped = tool_runner.ToolWithSchema(_typed_tool, {"type": "object"})
+    runner = tool_runner.ToolRunner([wrapped])
+    coerced = runner._coerce_args(wrapped, {"val": "21"})
+    self.assertEqual(coerced, {"val": 21})
+
+  def test_execute_coerces_arguments(self):
+    """Verifies that execute() automatically coerces argument types."""
+
+    def _sum_tool(x: int, y: float) -> float:
+      return x + y
+
+    runner = tool_runner.ToolRunner([_sum_tool])
+    result = asyncio.run(runner.execute("_sum_tool", x="10", y="5.5"))
+    self.assertEqual(result, 15.5)
 
 
 class ProcessToolCallsTest(absltest.TestCase):
@@ -531,6 +619,26 @@ class ContextInjectionTest(absltest.TestCase):
     self.assertEqual(result, 10)
     self.assertIs(received_ctx, mock_ctx)
 
+  def test_tool_with_pep604_union_context_receives_it(self):
+    """Verifies context injection works with PEP 604 union types (X | None)."""
+    from google.antigravity.tools import tool_context  # pylint: disable=g-import-not-at-top
+
+    received_ctx = None
+
+    def _pep604_context_tool(
+        arg1: str, ctx: tool_context.ToolContext | None
+    ) -> str:
+      nonlocal received_ctx
+      received_ctx = ctx
+      return f"got {arg1}"
+
+    mock_ctx = self._make_mock_context()
+    runner = tool_runner.ToolRunner([_pep604_context_tool])
+    runner.set_context(mock_ctx)
+    result = asyncio.run(runner.execute("_pep604_context_tool", arg1="hello"))
+    self.assertEqual(result, "got hello")
+    self.assertIs(received_ctx, mock_ctx)
+
   def test_no_context_set_skips_injection(self):
     """Verifies graceful behavior when no context has been set.
 
@@ -777,6 +885,17 @@ class SchemaGenerationTest(absltest.TestCase):
     sig = inspect.signature(public.fn.fn)
     self.assertIn("query", sig.parameters)
     self.assertNotIn("ctx", sig.parameters)
+
+  def test_public_callable_preserves_async_ness(self):
+    from google.antigravity.tools import tool_context  # pylint: disable=g-import-not-at-top
+
+    async def _schema_tool(query: str, ctx: tool_context.ToolContext) -> str:
+      del ctx
+      return query
+
+    runner = tool_runner.ToolRunner([_schema_tool])
+    public = runner.get_public_callable("_schema_tool")
+    self.assertTrue(tool_runner._is_async(public))
 
 
 if __name__ == "__main__":

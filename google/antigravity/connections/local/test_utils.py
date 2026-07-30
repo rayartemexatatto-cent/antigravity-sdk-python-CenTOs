@@ -19,9 +19,9 @@ from unittest import mock
 
 from google.protobuf import json_format
 
+from google.antigravity.proto import localharness_pb2
 from google.antigravity import types
 from google.antigravity.connections.local import local_connection
-from google.antigravity.connections.local import localharness_pb2
 from google.antigravity.hooks import hook_runner
 from google.antigravity.tools import tool_runner
 
@@ -74,6 +74,7 @@ class TestLocalHarness:
       tool_runner: tool_runner.ToolRunner | None = None,
       hook_runner: hook_runner.HookRunner | None = None,
       initial_history: list[types.Step] | None = None,
+      env: dict[str, str] | None = None,
   ):
     self.test_case = test_case
     self.ws = ws or TestWebSocket()
@@ -83,6 +84,7 @@ class TestLocalHarness:
         tool_runner=tool_runner,
         hook_runner=hook_runner,
         initial_history=initial_history,
+        env=env,
     )
 
   async def disconnect_sdk(self):

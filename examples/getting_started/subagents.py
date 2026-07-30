@@ -34,7 +34,10 @@ Criteria for correct script performance:
      producing warnings prefixed with '[AUDIT_WARNING]'.
   5. In Scenario 2, the subagent uses the 'get_reviewer_badge' tool to sign the
      report with 'Senior-L3-Auditor-Badge'.
-  6. Subagent hook logs fire for both scenarios, showing start/done events.
+  6. In Scenario 2, the 'code_reviewer' subagent only has access to its
+     allowlisted tool ('get_reviewer_badge') and cannot call unlisted root
+     tools ('get_root_admin_secret').
+  7. Subagent hook logs fire for both scenarios, showing start/done events.
 """
 
 import asyncio
@@ -84,6 +87,11 @@ async def log_post_tool(data: Any) -> None:
 def get_reviewer_badge() -> str:
   """Returns the reviewer's official certification badge name."""
   return "Senior-L3-Auditor-Badge"
+
+
+def get_root_admin_secret() -> str:
+  """Returns the root admin super secret password for root administration only."""
+  return "SUPER_SECRET_ROOT_PASSWORD_12345"
 
 
 async def run_dynamic_subagent() -> None:
@@ -140,8 +148,12 @@ async def run_custom_static_subagent() -> None:
             "CRITICAL: Every warning you output MUST start with "
             "'[AUDIT_WARNING]'. Use the 'get_reviewer_badge' tool to sign "
             "your final audit report with your official badge name. "
-            "Output your report directly in your final response. Do not use "
-            "the send_message tool to deliver it."
+            "Also verify that you do not have access to any secret tools "
+            "such as 'get_root_admin_secret' or any other root admin tools. "
+            "State explicitly in your report that you only have access to "
+            "your allowlisted reviewer tools and cannot call unlisted root "
+            "tools. Output your report directly in your final response. Do not "
+            "use the send_message tool to deliver it."
         ),
         tools=[get_reviewer_badge],
     )
@@ -149,22 +161,42 @@ async def run_custom_static_subagent() -> None:
     config = LocalAgentConfig(
         subagents=[reviewer_subagent],
         workspaces=[str(workspace_path)],
-        tools=[get_reviewer_badge],
+        tools=[get_reviewer_badge, get_root_admin_secret],
         hooks=[log_pre_tool, log_post_tool],
     )
 
     async with Agent(config) as my_agent:
       prompt = (
-          f"Ask the 'code_reviewer' subagent to review {target_file.name} "
-          "and sign the report with their reviewer badge name. "
-          "Show me the exact warnings it produced verbatim, including any "
-          "prefixes and the badge signature."
+          f"Ask the 'code_reviewer' subagent to review {target_file.name}, sign"
+          " the report with their reviewer badge name, and verify whether they"
+          " have access to the 'get_root_admin_secret' tool. Show me the exact"
+          " warnings it produced verbatim (`[AUDIT_WARNING]`), the badge"
+          " signature, and its verification that it cannot call"
+          " 'get_root_admin_secret' or access root secrets."
       )
       print(f"  User: {prompt}")
 
       response = await my_agent.chat(prompt)
       response_text = await response.text()
       print(f"\n  Agent:\n{response_text}")
+
+      # Print verification checks for developer reference:
+      print("\n  === Verification Results ===")
+      has_warning = "[AUDIT_WARNING]" in response_text
+      print(
+          f"  {'[PASS]' if has_warning else '[FAIL]'} Custom system prompt"
+          " '[AUDIT_WARNING]' prefix check"
+      )
+      has_badge = "Senior-L3-Auditor-Badge" in response_text
+      print(
+          f"  {'[PASS]' if has_badge else '[FAIL]'} Allowlisted tool access"
+          " ('Senior-L3-Auditor-Badge' signature) check"
+      )
+      no_secret = "SUPER_SECRET_ROOT_PASSWORD_12345" not in response_text
+      print(
+          f"  {'[PASS]' if no_secret else '[FAIL]'} Root secret isolation check"
+          " (get_root_admin_secret not called)"
+      )
 
 
 async def main() -> None:

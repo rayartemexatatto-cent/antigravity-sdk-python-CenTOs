@@ -112,7 +112,7 @@ async def run() -> None:
           "the image is created, tell the user the image name and "
           "a one-line confirmation. Do not describe the image."
       ),
-      model="gemini-3.5-flash",
+      model="gemini-3.6-flash",
       capabilities=types.CapabilitiesConfig(
           enabled_tools=[types.BuiltinTools.GENERATE_IMAGE]
       ),

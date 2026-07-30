@@ -15,6 +15,7 @@
 """Validates default implementations in the Connection abstract base class."""
 
 import unittest
+from google.antigravity import types
 from google.antigravity.connections import connection
 from google.antigravity.hooks import hooks as hooks_mod
 from google.antigravity.hooks import policy
@@ -47,6 +48,34 @@ class ConnectionTest(unittest.IsolatedAsyncioTestCase):
     await conn.wait_for_idle()
     self.assertFalse(await conn.wait_for_wakeup())
     await conn._send_tool_results([])
+    self.assertIsNone(conn.debug_config)
+
+
+class DebugConfigTest(unittest.TestCase):
+
+  def test_debug_config_defaults(self):
+    cfg = connection.DebugConfig()
+    self.assertTrue(cfg.enable_server_side_tracing)
+    self.assertIsNotNone(cfg.logging_level)
+
+  def test_agent_config_debug_validation(self):
+    class ConcreteConfig(connection.AgentConfig):
+
+      def create_strategy(self, *, tool_runner, hook_runner):
+        return None
+
+    cfg_bool = ConcreteConfig(debug_config=True)
+    self.assertIsInstance(cfg_bool.debug_config, connection.DebugConfig)
+    self.assertTrue(cfg_bool.debug_config.enable_server_side_tracing)
+
+    cfg_false = ConcreteConfig(debug_config=False)
+    self.assertIsNone(cfg_false.debug_config)
+
+    cfg_dict = ConcreteConfig(
+        debug_config={"enable_server_side_tracing": False}
+    )
+    self.assertIsInstance(cfg_dict.debug_config, connection.DebugConfig)
+    self.assertFalse(cfg_dict.debug_config.enable_server_side_tracing)
 
 
 class AgentConfigTest(unittest.TestCase):
@@ -150,6 +179,30 @@ class AgentConfigTest(unittest.TestCase):
     self.assertIs(copied.hooks[0], my_hook)
     self.assertIs(copied.triggers[0], my_trigger)
     self.assertIs(copied.policies[0], my_policy)
+
+  def test_session_continuation_validation_success(self):
+    class ConcreteConfig(connection.AgentConfig):
+
+      def create_strategy(self, *, tool_runner, hook_runner):
+        return None
+
+    # Should not raise
+    ConcreteConfig(
+        session_continuation_mode=types.SessionContinuationMode.RESUME,
+        conversation_id="12345678901234567890123456789012",
+    )
+
+  def test_session_continuation_validation_missing_id_raises(self):
+    class ConcreteConfig(connection.AgentConfig):
+
+      def create_strategy(self, *, tool_runner, hook_runner):
+        return None
+
+    with self.assertRaises(ValueError):
+      ConcreteConfig(
+          session_continuation_mode=types.SessionContinuationMode.RESUME,
+          conversation_id=None,
+      )
 
 
 if __name__ == "__main__":

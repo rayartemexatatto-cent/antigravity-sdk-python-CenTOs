@@ -204,16 +204,17 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
 
     class DummyCompactionHook(hooks.OnCompactionHook):
 
-      async def run(self, context: hooks.HookContext, data: Any) -> None:
+      async def run(self, context: hooks.HookContext, data: types.Step) -> None:
         called_with.append(data)
 
     runner = hook_runner.HookRunner(on_compaction_hooks=[DummyCompactionHook()])
     turn_context = hooks.TurnContext(runner.session_context)
+    step = types.Step(type=types.StepType.COMPACTION, content="compacted")
 
-    await runner.dispatch_compaction(turn_context, {"compaction": {}})
+    await runner.dispatch_compaction(turn_context, step)
 
     self.assertEqual(len(called_with), 1)
-    self.assertIn("compaction", called_with[0])
+    self.assertEqual(called_with[0].content, "compacted")
 
   async def test_has_hooks_includes_compaction(self):
     runner = hook_runner.HookRunner()
@@ -221,7 +222,7 @@ class HookRunnerTest(unittest.IsolatedAsyncioTestCase):
 
     class DummyCompactionHook(hooks.OnCompactionHook):
 
-      async def run(self, context: hooks.HookContext, data: Any) -> None:
+      async def run(self, context: hooks.HookContext, data: types.Step) -> None:
         pass
 
     runner = hook_runner.HookRunner(on_compaction_hooks=[DummyCompactionHook()])

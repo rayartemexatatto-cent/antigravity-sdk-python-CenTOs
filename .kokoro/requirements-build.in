@@ -4,3 +4,4 @@
 build
 setuptools>=68.0
 wheel
+grpcio-tools

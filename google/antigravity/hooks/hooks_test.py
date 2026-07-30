@@ -17,6 +17,7 @@
 from typing import Any
 import unittest
 
+from google.antigravity import types
 from google.antigravity.hooks import hooks
 
 
@@ -90,17 +91,19 @@ class BaseHookTest(unittest.IsolatedAsyncioTestCase):
 
   async def test_on_compaction_hook(self):
     """Verifies OnCompactionHook can be instantiated and executed."""
+    called = False
 
     class DummyCompactionHook(hooks.OnCompactionHook):
 
-      async def run(self, context: hooks.HookContext, data: Any) -> None:
-        data["compaction_observed"] = True
+      async def run(self, context: hooks.HookContext, data: types.Step) -> None:
+        nonlocal called
+        called = True
 
     hook = DummyCompactionHook()
     ctx = hooks.HookContext()
-    data = {}
-    await hook.run(ctx, data)
-    self.assertTrue(data["compaction_observed"])
+    step = types.Step(type=types.StepType.COMPACTION)
+    await hook.run(ctx, step)
+    self.assertTrue(called)
 
 
 if __name__ == "__main__":

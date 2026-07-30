@@ -20,48 +20,23 @@ returned by their lifecycle callbacks.
 from __future__ import annotations
 
 import abc
-from typing import Any, Awaitable, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from google.antigravity import types
 from google.antigravity.types import AskQuestionInteractionSpec
 from google.antigravity.types import HookResult
 from google.antigravity.types import QuestionHookResult
+from google.antigravity.utils import state as state_module
 
 
 # --- Contexts ---
 
 
-class HookContext:
+class HookContext(state_module.StateStore):
   """Base context for hooks to share state."""
 
-  def __init__(self, parent: "HookContext | None" = None):
-    self.parent = parent
-    self._store: dict[str, Any] = {}
-
-  def get_state(self, key: str, default: Any = None) -> Any:
-    """Gets a value from the context or its parents.
-
-    Args:
-      key: The key to look up.
-      default: The default value to return if the key is not found.
-
-    Returns:
-      The value associated with the key, or the default value.
-    """
-    if key in self._store:
-      return self._store[key]
-    if self.parent:
-      return self.parent.get_state(key, default)
-    return default
-
-  def set_state(self, key: str, value: Any) -> None:
-    """Sets a value in the local context.
-
-    Args:
-      key: The key to set.
-      value: The value to associate with the key.
-    """
-    self._store[key] = value
+  def __init__(self, parent: HookContext | None = None):
+    super().__init__(parent=parent)
 
 
 class SessionContext(HookContext):
@@ -201,14 +176,19 @@ class PostToolCallHook(InspectHook[types.ToolResult]):
 
 
 class OnToolErrorHook(TransformHook[Exception, Any]):
-  """Invoked when a tool fails, allowing for recovery or modification.
+  """Invoked when a tool fails, allowing authors to shape the failure message.
 
-  Receives the raised exception and returns the error representation that
-  the model should see. If the hook returns None, the harness uses its
-  default error formatting instead.
+  Receives the raised exception and returns an optional custom error string.
+  If a non-empty string is returned, it replaces the default stacktrace or
+  error message delivered to the model. If None is returned, default error
+  formatting is used. Works symmetrically across built-in and custom tools.
 
   The hook cannot fix or retry the tool call on its own, but it can guide
   the agent toward a specific resolution.
+
+  To customize failure messages or provide recovery fallbacks for your tool,
+  you can either return a custom error string from this hook or do so directly
+  within your tool implementation.
   """
 
   pass
@@ -227,7 +207,7 @@ class OnInteractionHook(
 
 
 # Compaction
-class OnCompactionHook(InspectHook):
+class OnCompactionHook(InspectHook[types.Step]):
   """Invoked when a context compaction event occurs.
 
   Compaction is triggered by the harness when the context window exceeds the
@@ -241,7 +221,7 @@ class OnCompactionHook(InspectHook):
 # --- Decorator Factory ---
 
 
-def _make_hook_decorator(hook_cls: type, *, pass_data: bool = True):
+def _make_hook_decorator(hook_cls: type[Any], *, pass_data: bool = True):
   """Creates a decorator that wraps an async function as a Hook subclass.
 
   Each decorator-created hook delegates its ``run()`` to the wrapped
@@ -286,3 +266,20 @@ on_session_end = _make_hook_decorator(OnSessionEndHook, pass_data=False)
 post_turn = _make_hook_decorator(PostTurnHook)
 post_tool_call = _make_hook_decorator(PostToolCallHook)
 on_tool_error = _make_hook_decorator(OnToolErrorHook)
+
+
+# Internal hooks for telemetry
+class _PreStepHook(InspectHook[types.Step]):
+  """Invoked when a step is first seen in the stream (internal)."""
+
+  pass
+
+
+class _PostStepHook(InspectHook[types.Step]):
+  """Invoked when a step completes (internal)."""
+
+  pass
+
+
+_pre_step = _make_hook_decorator(_PreStepHook)
+_post_step = _make_hook_decorator(_PostStepHook)

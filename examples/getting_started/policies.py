@@ -31,6 +31,8 @@ Demonstrates:
 2. Specific Denylist rules (e.g., blocking dangerous shell commands like `rm`).
 3. Specific Allowlist rules (e.g., allowing only specific safe commands).
 4. Interactive confirmation rules using `policy.ask_user()`.
+5. Custom tool policy rules (`policy.deny(...)`) applied to custom functions
+   registered via `LocalAgentConfig(tools=[...])`.
 
 To run:
   python policies.py
@@ -40,6 +42,8 @@ Criteria for correct script performance:
   2. The listing files prompt succeeds because list_directory is allowed.
   3. The rm -rf prompt is denied by the dangerous command policy.
   4. The production.key prompt triggers the ask_user policy and is denied.
+  5. The lookup_secret custom tool prompt is denied by the block-secret-lookup
+  policy.
 """
 
 import asyncio
@@ -53,7 +57,9 @@ import pydantic
 class RunCommandArgs(pydantic.BaseModel):
   """Arguments for run_command tool."""
 
-  command_line: str
+  command_line: str = pydantic.Field(
+      validation_alias=pydantic.AliasChoices("command_line", "CommandLine")
+  )
 
 
 class DeleteFileArgs(pydantic.BaseModel):
@@ -72,6 +78,18 @@ def _block_rm_predicate(args: RunCommandArgs) -> bool:
 def _critical_file_predicate(args: DeleteFileArgs) -> bool:
   """Predicate to detect critical file deletion attempts."""
   return args.path.endswith(".key") or "production" in args.path
+
+
+def lookup_secret(secret_name: str) -> str:
+  """Looks up a secret by name.
+
+  Args:
+    secret_name: The name of the secret to look up.
+
+  Returns:
+    The secret string value.
+  """
+  return f"SUPER_SECRET_VALUE_FOR_{secret_name}"
 
 
 def programmatic_approval_handler(tool_call: types.ToolCall) -> bool:
@@ -131,9 +149,11 @@ async def main() -> None:
           when=_critical_file_predicate,
           name="ask-for-critical-creates",
       ),
+      # 5. Deny custom tool execution
+      policy.deny(lookup_secret.__name__, name="block-secret-lookup"),
   ]
 
-  config = LocalAgentConfig(policies=policies)
+  config = LocalAgentConfig(tools=[lookup_secret], policies=policies)
 
   async with Agent(config) as my_agent:
     print("\n  Chatting with agent...")
@@ -158,6 +178,12 @@ async def main() -> None:
     print(f"\n  User: {prompt3}")
     response3 = await my_agent.chat(prompt3)
     print(f"  Agent: {await response3.text()}")
+
+    # Try calling the custom tool (should be denied by policy)
+    prompt4 = "Look up the secret named 'api_key' using lookup_secret."
+    print(f"\n  User: {prompt4}")
+    response4 = await my_agent.chat(prompt4)
+    print(f"  Agent: {await response4.text()}")
 
 
 if __name__ == "__main__":

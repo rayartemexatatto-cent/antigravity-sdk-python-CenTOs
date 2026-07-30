@@ -10,7 +10,11 @@ Google Antigravity SDK agents.
 
 ### Default Model
 
-Google Antigravity SDK's default model is `gemini-3.5-flash`.
+Google Antigravity SDK's default model is `gemini-3.6-flash`.
+
+### Default Image Generation Model
+
+Google Antigravity SDK's default image generation model is `gemini-3.1-flash-lite-image`.
 
 ### Finding Valid Models
 
@@ -39,7 +43,7 @@ Here are small code snippets demonstrating advanced configurations using
 from google.antigravity import Agent, LocalAgentConfig
 
 config = LocalAgentConfig(
-    model="gemini-3.5-flash",
+    model="gemini-3.6-flash",
 )
 async with Agent(config=config) as agent:
     # Use the agent
@@ -134,3 +138,17 @@ config = LocalAgentConfig(
 ```
 
 For more details, see [mcp_integration.md](mcp_integration.md).
+
+### Custom Environment Variables (Subprocess & Shell Isolation)
+
+You can pass a custom dictionary of environment variables using `env` in `LocalAgentConfig`. These variables override any variables with the same name in the parent process's environment when launching `localharness` and are inherited by shell tool execution (`run_command`):
+
+```python
+from google.antigravity import Agent, LocalAgentConfig
+import os
+
+config = LocalAgentConfig(
+    env={"PATH": "/custom/bin:" + os.environ.get("PATH", ""), "MY_CUSTOM_VAR": "foo"},
+)
+```
+

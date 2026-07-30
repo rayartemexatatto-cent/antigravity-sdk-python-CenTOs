@@ -55,10 +55,10 @@ async def exploding_tool(input_data: str) -> str:
 # 2. Define the error handler hook using the decorator syntax.
 @hooks.on_tool_error
 async def tool_error_handler(data: Exception) -> str | None:
-  """Intercepts ValueError from tools and provides guidance."""
+  """Intercepts tool execution errors and provides guidance."""
   print(f"\n  🔧 [ErrorHandler] Caught exception: {data}")
 
-  if isinstance(data, ValueError):
+  if isinstance(data, (types.ToolExecutionError, ValueError)):
     # Return a message that the model will see instead of the raw error.
     # This guides the model on how to respond or recover.
     return (

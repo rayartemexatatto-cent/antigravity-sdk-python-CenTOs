@@ -19,17 +19,22 @@ Re-exports the public API so that existing import paths like
 continue to work without changes.
 """
 
+from google.antigravity.connections.local.event_processor import LocalConnectionStep
+from google.antigravity.connections.local.litert_connection_config import LiteRTAgentConfig
+from google.antigravity.connections.local.litert_connection_config import LiteRTBackend
 from google.antigravity.connections.local.local_connection import callable_to_tool_proto
 from google.antigravity.connections.local.local_connection import LocalConnection
-from google.antigravity.connections.local.local_connection import LocalConnectionStep
 from google.antigravity.connections.local.local_connection import LocalConnectionStrategy
 from google.antigravity.connections.local.local_connection_config import LocalAgentConfig
+from google.antigravity.connections.local.local_openai_connection_config import LocalOpenAIAgentConfig
 from google.antigravity.connections.local.types import EditFileResult
 from google.antigravity.connections.local.types import FindFileResult
 from google.antigravity.connections.local.types import GenerateImageResult
 from google.antigravity.connections.local.types import ListDirectoryEntry
 from google.antigravity.connections.local.types import ListDirectoryResult
+from google.antigravity.connections.local.types import ReadUrlContentResult
 from google.antigravity.connections.local.types import RunCommandResult
 from google.antigravity.connections.local.types import SearchDirectoryResult
+from google.antigravity.connections.local.types import SearchWebResult
 from google.antigravity.connections.local.types import TextResult
 from google.antigravity.connections.local.types import ToolOutput

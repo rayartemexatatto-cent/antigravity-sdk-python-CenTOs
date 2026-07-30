@@ -450,5 +450,82 @@ class RunInteractiveLoopTest(unittest.IsolatedAsyncioTestCase):
     self.assertIs(called_config.hooks[0], existing_hook)
 
 
+class SpinnerInteractionTest(unittest.IsolatedAsyncioTestCase):
+  """Tests for Spinner pausing and resuming during interactions."""
+
+  async def test_spinner_pause_resume(self):
+    """Verifies that Spinner.pause() and resume() correctly control the task."""
+    spinner = interactive.Spinner("Testing")
+    spinner._enabled = True  # Force enabled for test.
+
+    async with spinner:
+      self.assertTrue(spinner.is_running)
+      self.assertIsNotNone(spinner._task)
+      self.assertIs(interactive.Spinner.get_active(), spinner)
+
+      spinner.pause()
+      self.assertFalse(spinner.is_running)
+      self.assertIsNone(spinner._task)
+
+      spinner.resume()
+      self.assertTrue(spinner.is_running)
+      self.assertIsNotNone(spinner._task)
+
+    self.assertIsNone(interactive.Spinner.get_active())
+
+  @mock.patch("builtins.input")
+  async def test_async_input_pauses_active_spinner(self, mock_input):
+    """Verifies that async_input automatically pauses an active spinner."""
+    mock_input.return_value = "hello"
+    spinner = interactive.Spinner("Testing")
+    spinner._enabled = True
+
+    async with spinner:
+      self.assertTrue(spinner.is_running)
+      with (
+          mock.patch.object(
+              spinner, "pause", wraps=spinner.pause
+          ) as mock_pause,
+          mock.patch.object(
+              spinner, "resume", wraps=spinner.resume
+          ) as mock_resume,
+      ):
+        res = await interactive.async_input("prompt> ")
+        self.assertEqual(res, "hello")
+        mock_pause.assert_called_once()
+        mock_resume.assert_called_once()
+        self.assertTrue(spinner.is_running)
+
+  @mock.patch("builtins.input")
+  async def test_ask_user_handler_pauses_active_spinner(self, mock_input):
+    """Verifies that ask_user_handler pauses and resumes the active spinner."""
+    mock_input.return_value = "y"
+    spinner = interactive.Spinner("Testing")
+    spinner._enabled = True
+
+    async with spinner:
+      self.assertTrue(spinner.is_running)
+      with (
+          mock.patch.object(
+              interactive.Spinner,
+              "pause_active",
+              wraps=interactive.Spinner.pause_active,
+          ) as mock_pause,
+          mock.patch.object(
+              interactive.Spinner,
+              "resume_active",
+              wraps=interactive.Spinner.resume_active,
+          ) as mock_resume,
+      ):
+        tc = types.ToolCall(name="test_tool", args={"foo": "bar"})
+        res = await interactive.ask_user_handler(tc)
+        self.assertTrue(res)
+        mock_pause.assert_called()
+        mock_resume.assert_called()
+        self.assertTrue(spinner.is_running)
+
+
 if __name__ == "__main__":
   unittest.main()
+
+
